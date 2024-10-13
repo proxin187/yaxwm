@@ -1,0 +1,20 @@
+[package]
+name = "yaxum"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "yaxum"
+path = "src/yaxum/main.rs"
+
+[[bin]]
+name = "yaxc"
+path = "src/yaxc/main.rs"
+
+[lib]
+name = "proto"
+path = "src/proto/lib.rs"
+
+
+[dependencies]
+yaxi = { path = "../xrs" }
