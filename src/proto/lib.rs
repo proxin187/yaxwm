@@ -5,58 +5,70 @@ use std::env;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Sequence {
-    pub action: Action,
+    pub request: Request,
     pub value: u8,
 }
 
 impl Sequence {
-    pub fn new(action: Action, value: u8) -> Sequence {
+    pub fn new(request: Request, value: u8) -> Sequence {
         Sequence {
-            action,
+            request,
             value,
         }
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        vec![self.action.into(), self.value]
+        vec![self.request.into(), self.value]
     }
 }
 
 impl From<&[u8]> for Sequence {
     fn from(bytes: &[u8]) -> Sequence {
         Sequence {
-            action: Action::from(bytes[0]),
+            request: Request::from(bytes[0]),
             value: bytes[1],
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Action {
+pub enum Request {
     Workspace,
     Kill,
     Close,
+    PaddingTop,
+    PaddingBottom,
+    PaddingLeft,
+    PaddingRight,
     Unknown,
 }
 
-impl From<u8> for Action {
-    fn from(value: u8) -> Action {
+impl From<u8> for Request {
+    fn from(value: u8) -> Request {
         match value {
-            0x0 => Action::Workspace,
-            0x1 => Action::Kill,
-            0x2 => Action::Close,
-            _ => Action::Unknown,
+            0x0 => Request::Workspace,
+            0x1 => Request::Kill,
+            0x2 => Request::Close,
+            0x3 => Request::PaddingTop,
+            0x4 => Request::PaddingBottom,
+            0x5 => Request::PaddingLeft,
+            0x6 => Request::PaddingRight,
+            _ => Request::Unknown,
         }
     }
 }
 
-impl From<Action> for u8 {
-    fn from(action: Action) -> u8 {
-        match action {
-            Action::Workspace => 0x0,
-            Action::Kill => 0x1,
-            Action::Close => 0x2,
-            Action::Unknown => 0xfe
+impl From<Request> for u8 {
+    fn from(request: Request) -> u8 {
+        match request {
+            Request::Workspace => 0x0,
+            Request::Kill => 0x1,
+            Request::Close => 0x2,
+            Request::PaddingTop => 0x3,
+            Request::PaddingBottom => 0x4,
+            Request::PaddingLeft => 0x5,
+            Request::PaddingRight => 0x6,
+            Request::Unknown => 0xfe
         }
     }
 }

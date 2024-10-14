@@ -1,5 +1,7 @@
+use crate::config::{Config, Padding};
 use crate::log::{self, Severity};
 use crate::server::Server;
+use crate::startup;
 
 use yaxi::display::{self, Display, TryClone};
 use yaxi::proto::{Event, EventMask, RevertTo};
@@ -7,7 +9,7 @@ use yaxi::window::{Window, WindowKind};
 
 use std::os::unix::net::UnixStream;
 
-use proto::Action;
+use proto::Request;
 
 
 pub struct Workspaces {
@@ -94,6 +96,15 @@ impl Area {
         (x >= self.x && self.y >= self.y) && (self.x + self.width > x && self.y + self.height > y)
     }
 
+    pub fn pad(&self, padding: Padding) -> Area {
+        Area {
+            x: self.x + padding.left,
+            y: self.y + padding.top,
+            width: self.width - padding.right,
+            height: self.height - padding.bottom,
+        }
+    }
+
     pub fn split(&mut self) -> Area {
         let area = self.clone();
 
@@ -153,6 +164,7 @@ pub struct WindowManager {
     root: Window<UnixStream>,
     monitors: Monitors,
     server: Server,
+    config: Config,
     should_close: bool,
 }
 
@@ -169,6 +181,7 @@ impl WindowManager {
                 workspace: Workspaces::new(4),
             }], root),
             server: Server::new(),
+            config: Config::default(),
             should_close: false,
         })
     }
@@ -178,11 +191,15 @@ impl WindowManager {
 
         self.server.listen()?;
 
+        startup::startup()?;
+
         Ok(())
     }
 
     fn tile(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.monitors.all(|monitor| monitor.workspace.tile(monitor.area))?;
+        self.monitors.all(|monitor| {
+            monitor.workspace.tile(monitor.area.pad(self.config.padding))
+        })?;
 
         Ok(())
     }
@@ -199,20 +216,26 @@ impl WindowManager {
 
     fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for sequence in self.server.incoming()? {
-            match sequence.action {
-                Action::Workspace => {
+            println!("sequence: {:?}", sequence);
+
+            match sequence.request {
+                Request::Workspace => {
                     self.monitors.focused(|monitor| {
                         monitor.workspace.current = sequence.value as usize;
 
                         monitor.workspace.tile(monitor.area)
                     })?;
                 },
-                Action::Kill => {
+                Request::Kill => {
                     self.focused_win(|mut window| window.kill())?;
                 },
-                Action::Close => {
+                Request::Close => {
                 },
-                Action::Unknown => {},
+                Request::PaddingTop => self.config.padding.top = sequence.value as u16,
+                Request::PaddingBottom => self.config.padding.bottom = sequence.value as u16,
+                Request::PaddingLeft => self.config.padding.left = sequence.value as u16,
+                Request::PaddingRight => self.config.padding.right = sequence.value as u16,
+                Request::Unknown => {},
             }
         }
 
@@ -222,10 +245,6 @@ impl WindowManager {
     fn handle_event(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match self.display.next_event()? {
             Event::MapRequest { window, .. } => {
-                // "X connection to :2 broken (explicit kill or server shutdown)" is not an error
-                // message when we kill a window as its only a message from the window that got
-                // killed
-
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
                 self.monitors.focused(|monitor| {
@@ -236,7 +255,11 @@ impl WindowManager {
 
                 self.tile()?;
 
-                self.display.window_from_id(window)?.set_input_focus(RevertTo::Parent)?;
+                let mut window = self.display.window_from_id(window)?;
+
+                window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow])?;
+
+                window.set_input_focus(RevertTo::Parent)?;
             },
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
@@ -254,8 +277,6 @@ impl WindowManager {
                 self.tile()?;
             },
             Event::EnterNotify { window, .. } => {
-                log::write(format!("enter notify: {}\n", window), Severity::Info)?;
-
                 if self.root.id() != window {
                     self.display.window_from_id(window)?.set_input_focus(RevertTo::Parent)?;
                 }

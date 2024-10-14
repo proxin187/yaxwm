@@ -3,15 +3,20 @@ mod args;
 
 use args::{Args, Argument, Rule};
 
-use proto::{Action, Stream, Sequence};
+use proto::{Request, Stream, Sequence};
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args: Args<Action> = Args::new();
+    let mut args: Args<Request> = Args::new();
 
-    args.append("-kill", Rule::Flag(Action::Kill));
-    args.append("-close", Rule::Flag(Action::Close));
-    args.append("-workspace", Rule::Integer(Action::Workspace));
+    args.append("--kill", Rule::Flag(Request::Kill));
+    args.append("--close", Rule::Flag(Request::Close));
+    args.append("--workspace", Rule::Integer(Request::Workspace));
+
+    args.append("--padding-top", Rule::Integer(Request::PaddingTop));
+    args.append("--padding-bottom", Rule::Integer(Request::PaddingBottom));
+    args.append("--padding-left", Rule::Integer(Request::PaddingLeft));
+    args.append("--padding-right", Rule::Integer(Request::PaddingRight));
 
     let mut stream = Stream::connect()?;
 

@@ -1,5 +1,6 @@
 mod startup;
 mod server;
+mod config;
 mod log;
 mod wm;
 
@@ -11,8 +12,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::init(vec![Output::stdout()?, Output::file("/home/proxin/.config/yaxum/log.txt")?])?;
 
     log::write("starting yaxum\n", Severity::Info)?;
-
-    startup::startup()?;
 
     let mut wm = WindowManager::new()?;
 
