@@ -41,17 +41,10 @@ impl Workspaces {
         self.workspaces[self.current].iter().position(|window| window.id() == wid)
     }
 
-    pub fn set_nearest_input_focus(&mut self, index: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let index = index.min(self.workspaces[self.current].len().max(1) - 1);
-
-        if let Some(window) = self.workspaces[self.current].get_mut(index) {
-            window.set_input_focus(RevertTo::Parent)?;
-        }
-
-        Ok(())
+    pub fn get_nearest(&mut self, index: usize)  -> usize {
+        index.min(self.workspaces[self.current].len().max(1) - 1)
     }
-
-    pub fn tile(&mut self, mut area: Area) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn tile(&mut self, mut area: Area, gaps: u16) -> Result<(), Box<dyn std::error::Error>> {
         for (w_idx, workspace) in self.workspaces.iter_mut().enumerate() {
             if w_idx == self.current {
                 let windows = workspace.len();
@@ -59,7 +52,7 @@ impl Workspaces {
                 for (index, window) in workspace.iter_mut().enumerate() {
                     let win = (index + 1 < windows).then(|| area.split()).unwrap_or(area);
 
-                    window.mov_resize(win.x, win.y, win.width, win.height)?;
+                    window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
 
                     window.map(WindowKind::Window)?;
                 }
@@ -100,8 +93,8 @@ impl Area {
         Area {
             x: self.x + padding.left,
             y: self.y + padding.top,
-            width: self.width - padding.right,
-            height: self.height - padding.bottom,
+            width: self.width - padding.right - padding.left,
+            height: self.height - padding.bottom - padding.top,
         }
     }
 
@@ -187,7 +180,7 @@ impl WindowManager {
     }
 
     fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.root.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow])?;
+        self.root.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
         self.server.listen()?;
 
@@ -198,7 +191,7 @@ impl WindowManager {
 
     fn tile(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.monitors.all(|monitor| {
-            monitor.workspace.tile(monitor.area.pad(self.config.padding))
+            monitor.workspace.tile(monitor.area.pad(self.config.padding), self.config.windows.gaps)
         })?;
 
         Ok(())
@@ -214,16 +207,39 @@ impl WindowManager {
         }
     }
 
+    pub fn set_nearest_input_focus(&mut self, index: usize) -> Result<(), Box<dyn std::error::Error>> {
+        self.monitors.focused(|monitor| {
+            let index = monitor.workspace.get_nearest(index);
+
+            if let Some(window) = monitor.workspace.workspaces[monitor.workspace.current].get_mut(index) {
+                window.set_input_focus(RevertTo::Parent)?;
+            }
+
+            Ok(())
+        })
+    }
+
+    fn set_input_focus(&mut self, mut window: Window<UnixStream>) -> Result<(), Box<dyn std::error::Error>> {
+        window.set_input_focus(RevertTo::Parent)?;
+
+        window.set_border_width(self.config.windows.borders.width)?;
+        window.set_border_pixel(self.config.windows.borders.focused)?;
+
+        Ok(())
+    }
+
     fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO: we want to auto retile when the config is updated
+
         for sequence in self.server.incoming()? {
             println!("sequence: {:?}", sequence);
 
             match sequence.request {
                 Request::Workspace => {
                     self.monitors.focused(|monitor| {
-                        monitor.workspace.current = sequence.value as usize;
+                        monitor.workspace.current = sequence.value.max(1) as usize - 1;
 
-                        monitor.workspace.tile(monitor.area)
+                        monitor.workspace.tile(monitor.area.pad(self.config.padding), self.config.windows.gaps)
                     })?;
                 },
                 Request::Kill => {
@@ -235,6 +251,10 @@ impl WindowManager {
                 Request::PaddingBottom => self.config.padding.bottom = sequence.value as u16,
                 Request::PaddingLeft => self.config.padding.left = sequence.value as u16,
                 Request::PaddingRight => self.config.padding.right = sequence.value as u16,
+                Request::WindowGaps => self.config.windows.gaps = sequence.value as u16,
+                Request::FocusedBorder => self.config.windows.borders.focused = sequence.value,
+                Request::NormalBorder => self.config.windows.borders.normal = sequence.value,
+                Request::BorderWidth => self.config.windows.borders.width = sequence.value as u16,
                 Request::Unknown => {},
             }
         }
@@ -243,6 +263,8 @@ impl WindowManager {
     }
 
     fn handle_event(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO: WE NEED TO USE FocusIn And FocusOut events to change the border colors
+
         match self.display.next_event()? {
             Event::MapRequest { window, .. } => {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
@@ -257,9 +279,11 @@ impl WindowManager {
 
                 let mut window = self.display.window_from_id(window)?;
 
-                window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow])?;
+                window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
-                window.set_input_focus(RevertTo::Parent)?;
+                // window.set_input_focus(RevertTo::Parent)?;
+
+                self.set_input_focus(window)?;
             },
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
@@ -267,8 +291,6 @@ impl WindowManager {
                 self.monitors.all(|monitor| {
                     if let Some(index) = monitor.workspace.find(window) {
                         monitor.workspace.remove(index);
-
-                        monitor.workspace.set_nearest_input_focus(index)?;
                     }
 
                     Ok(())
@@ -278,7 +300,15 @@ impl WindowManager {
             },
             Event::EnterNotify { window, .. } => {
                 if self.root.id() != window {
-                    self.display.window_from_id(window)?.set_input_focus(RevertTo::Parent)?;
+                    let border = self.config.windows.borders.normal;
+
+                    self.focused_win(|mut window| window.set_border_pixel(border))?;
+
+                    // self.display.window_from_id(window)?.set_input_focus(RevertTo::Parent)?;
+
+                    let window = self.display.window_from_id(window)?;
+
+                    self.set_input_focus(window)?;
                 }
             },
             Event::ConfigureRequest { stack_mode, parent, window, sibling, x, y, width, height, border_width, mask } => {

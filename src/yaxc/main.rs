@@ -18,6 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.append("--padding-left", Rule::Integer(Request::PaddingLeft));
     args.append("--padding-right", Rule::Integer(Request::PaddingRight));
 
+    args.append("--window-gaps", Rule::Integer(Request::WindowGaps));
+
+    args.append("--focused-border", Rule::Hex(Request::FocusedBorder));
+    args.append("--normal-border", Rule::Hex(Request::NormalBorder));
+    args.append("--border-width", Rule::Integer(Request::BorderWidth));
+
     let mut stream = Stream::connect()?;
 
     while !args.is_empty() {
@@ -25,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Argument::Flag { kind } => {
                 stream.send(Sequence::new(kind, 0))?;
             },
-            Argument::Integer { kind, value } => {
+            Argument::Integer { kind, value } | Argument::Hex { kind, value} => {
                 stream.send(Sequence::new(kind, value))?;
             },
         }

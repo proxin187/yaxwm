@@ -10,13 +10,15 @@ pub struct Padding {
 
 #[derive(Debug, Default)]
 pub struct Borders {
-    pub width: usize,
+    pub width: u16,
+    pub focused: u32,
+    pub normal: u32,
 }
 
 #[derive(Debug, Default)]
 pub struct Windows {
     pub borders: Borders,
-    pub gaps: u8,
+    pub gaps: u16,
 }
 
 #[derive(Debug, Default)]

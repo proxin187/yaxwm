@@ -9,6 +9,7 @@ use std::env;
 pub enum Rule<T: Clone + Copy> {
     Flag(T),
     Integer(T),
+    Hex(T),
 }
 
 #[derive(Debug)]
@@ -18,7 +19,11 @@ pub enum Argument<T: std::fmt::Debug> {
     },
     Integer {
         kind: T,
-        value: u8,
+        value: u32,
+    },
+    Hex {
+        kind: T,
+        value: u32,
     },
 }
 
@@ -48,17 +53,19 @@ impl<T> Args<T> where T: Clone + Copy + std::fmt::Debug {
             Rule::Flag(kind) => Ok(Argument::Flag { kind }),
             Rule::Integer(kind) => Ok(Argument::Integer {
                 kind,
-                value: self.parse_integer()?,
+                value: self.parse_next()?.parse::<u32>()?,
+            }),
+            Rule::Hex(kind) => Ok(Argument::Hex {
+                kind,
+                value: u32::from_str_radix(&self.parse_next()?, 16)?,
             }),
         }
     }
 
-    fn parse_integer(&mut self) -> Result<u8, Box<dyn std::error::Error>> {
+    fn parse_next(&mut self) -> Result<String, Box<dyn std::error::Error>> {
         self.args.next()
             .ok_or(Box::new(Error::ArgsEmpty))
             .map_err(|err| err.into())
-            .and_then(|arg| arg.parse::<u8>()
-            .map_err(|err| Into::<Box<dyn std::error::Error>>::into(err)))
     }
 
     fn parse(&mut self, arg: String) -> Result<Argument<T>, Box<dyn std::error::Error>> {

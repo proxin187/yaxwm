@@ -67,9 +67,9 @@ impl Listener {
     }
 
     fn handle(&self, mut stream: Stream) -> Result<(), Box<dyn std::error::Error>> {
-        let actions = stream.read()?.chunks(2)
-            .filter(|chunk| chunk.len() == 2)
-            .map(|chunk| Sequence::from(chunk))
+        let actions = stream.read()?.chunks(5)
+            .filter(|chunk| chunk.len() == 5)
+            .map(|chunk| Sequence::decode(chunk))
             .collect::<Vec<Sequence>>();
 
         lock!(self.incoming)?.extend(actions);

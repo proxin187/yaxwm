@@ -1,36 +1,42 @@
 use std::os::unix::net::UnixStream;
 use std::io::{Read, Write};
+use std::slice;
 use std::env;
+use std::ptr;
+use std::mem;
 
 
+#[repr(packed, C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Sequence {
     pub request: Request,
-    pub value: u8,
+    pub value: u32,
 }
 
 impl Sequence {
-    pub fn new(request: Request, value: u8) -> Sequence {
+    pub fn new(request: Request, value: u32) -> Sequence {
         Sequence {
             request,
             value,
         }
     }
 
-    pub fn encode(&self) -> Vec<u8> {
-        vec![self.request.into(), self.value]
-    }
-}
+    pub fn decode<'a>(bytes: &'a [u8]) -> Sequence {
+        unsafe {
+            assert_eq!(bytes.len(), mem::size_of::<Sequence>());
 
-impl From<&[u8]> for Sequence {
-    fn from(bytes: &[u8]) -> Sequence {
-        Sequence {
-            request: Request::from(bytes[0]),
-            value: bytes[1],
+            ptr::read(bytes.as_ptr() as *const Sequence)
+        }
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        unsafe {
+            slice::from_raw_parts((self as *const Sequence) as *const u8, mem::size_of::<Sequence>()).to_vec()
         }
     }
 }
 
+#[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum Request {
     Workspace,
@@ -40,6 +46,10 @@ pub enum Request {
     PaddingBottom,
     PaddingLeft,
     PaddingRight,
+    WindowGaps,
+    FocusedBorder,
+    NormalBorder,
+    BorderWidth,
     Unknown,
 }
 
@@ -53,6 +63,10 @@ impl From<u8> for Request {
             0x4 => Request::PaddingBottom,
             0x5 => Request::PaddingLeft,
             0x6 => Request::PaddingRight,
+            0x7 => Request::WindowGaps,
+            0x8 => Request::FocusedBorder,
+            0x9 => Request::NormalBorder,
+            0xa => Request::BorderWidth,
             _ => Request::Unknown,
         }
     }
@@ -68,6 +82,10 @@ impl From<Request> for u8 {
             Request::PaddingBottom => 0x4,
             Request::PaddingLeft => 0x5,
             Request::PaddingRight => 0x6,
+            Request::WindowGaps => 0x7,
+            Request::FocusedBorder => 0x8,
+            Request::NormalBorder => 0x9,
+            Request::BorderWidth => 0xa,
             Request::Unknown => 0xfe
         }
     }
