@@ -8,7 +8,7 @@ pub struct Padding {
     pub right: u16,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Borders {
     pub width: u16,
     pub focused: u32,

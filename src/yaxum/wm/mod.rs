@@ -41,9 +41,26 @@ impl Workspaces {
         self.workspaces[self.current].iter().position(|window| window.id() == wid)
     }
 
-    pub fn get_nearest(&mut self, index: usize)  -> usize {
-        index.min(self.workspaces[self.current].len().max(1) - 1)
+    pub fn set_nearest_input_focus(&mut self, index: usize) -> Result<(), Box<dyn std::error::Error>> {
+        let index = index.min(self.workspaces[self.current].len().max(1) - 1);
+
+        if let Some(window) = self.workspaces[self.current].get_mut(index) {
+            window.set_input_focus(RevertTo::Parent)?;
+        }
+
+        Ok(())
     }
+
+    pub fn map_windows<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Window<UnixStream>) -> Result<(), Box<dyn std::error::Error>> {
+        for workspace in self.workspaces.iter_mut() {
+            for window in workspace {
+                f(window)?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn tile(&mut self, mut area: Area, gaps: u16) -> Result<(), Box<dyn std::error::Error>> {
         for (w_idx, workspace) in self.workspaces.iter_mut().enumerate() {
             if w_idx == self.current {
@@ -207,23 +224,24 @@ impl WindowManager {
         }
     }
 
-    pub fn set_nearest_input_focus(&mut self, index: usize) -> Result<(), Box<dyn std::error::Error>> {
-        self.monitors.focused(|monitor| {
-            let index = monitor.workspace.get_nearest(index);
+    fn set_focused_border(&mut self, focused: u32) -> Result<(), Box<dyn std::error::Error>> {
+        if focused != self.root.id() {
+            let borders = self.config.windows.borders;
 
-            if let Some(window) = monitor.workspace.workspaces[monitor.workspace.current].get_mut(index) {
-                window.set_input_focus(RevertTo::Parent)?;
-            }
+            self.monitors.focused(|monitor| {
+                monitor.workspace.map_windows(|window| {
+                    window.set_border_width(borders.width)?;
 
-            Ok(())
-        })
-    }
+                    window.set_border_pixel(borders.normal)?;
 
-    fn set_input_focus(&mut self, mut window: Window<UnixStream>) -> Result<(), Box<dyn std::error::Error>> {
-        window.set_input_focus(RevertTo::Parent)?;
+                    Ok(())
+                })?;
 
-        window.set_border_width(self.config.windows.borders.width)?;
-        window.set_border_pixel(self.config.windows.borders.focused)?;
+                Ok(())
+            })?;
+
+            self.display.window_from_id(focused)?.set_border_pixel(borders.focused)?;
+        }
 
         Ok(())
     }
@@ -263,8 +281,6 @@ impl WindowManager {
     }
 
     fn handle_event(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: WE NEED TO USE FocusIn And FocusOut events to change the border colors
-
         match self.display.next_event()? {
             Event::MapRequest { window, .. } => {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
@@ -281,9 +297,9 @@ impl WindowManager {
 
                 window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
-                // window.set_input_focus(RevertTo::Parent)?;
+                window.set_input_focus(RevertTo::Parent)?;
 
-                self.set_input_focus(window)?;
+                self.set_focused_border(window.id())?;
             },
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
@@ -291,6 +307,8 @@ impl WindowManager {
                 self.monitors.all(|monitor| {
                     if let Some(index) = monitor.workspace.find(window) {
                         monitor.workspace.remove(index);
+
+                        monitor.workspace.set_nearest_input_focus(index)?;
                     }
 
                     Ok(())
@@ -299,17 +317,14 @@ impl WindowManager {
                 self.tile()?;
             },
             Event::EnterNotify { window, .. } => {
-                if self.root.id() != window {
-                    let border = self.config.windows.borders.normal;
+                log::write(format!("enter notify: {}\n", window), Severity::Info)?;
 
-                    self.focused_win(|mut window| window.set_border_pixel(border))?;
-
-                    // self.display.window_from_id(window)?.set_input_focus(RevertTo::Parent)?;
-
-                    let window = self.display.window_from_id(window)?;
-
-                    self.set_input_focus(window)?;
+                if window != self.root.id() {
+                    self.display.window_from_id(window)?.set_input_focus(RevertTo::Parent)?;
                 }
+            },
+            Event::FocusIn { window, .. } => {
+                self.set_focused_border(window)?;
             },
             Event::ConfigureRequest { stack_mode, parent, window, sibling, x, y, width, height, border_width, mask } => {
                 // TODO: looks like there is something wrong with configure request,
