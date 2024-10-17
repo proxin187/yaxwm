@@ -24,6 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.append("--normal-border", Rule::Hex(Request::NormalBorder));
     args.append("--border-width", Rule::Integer(Request::BorderWidth));
 
+    args.append("--focus-up", Rule::Flag(Request::FocusUp));
+    args.append("--focus-down", Rule::Flag(Request::FocusDown));
+    args.append("--focus-master", Rule::Flag(Request::FocusMaster));
+
     let mut stream = Stream::connect()?;
 
     while !args.is_empty() {

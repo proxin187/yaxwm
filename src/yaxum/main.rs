@@ -9,7 +9,7 @@ use wm::WindowManager;
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    log::init(vec![Output::stdout()?, Output::file("/home/proxin/.config/yaxum/log.txt")?])?;
+    log::init(vec![Output::stdout()?, Output::file("/home/proxin/.config/yaxwm/log.txt")?])?;
 
     log::write("starting yaxum\n", Severity::Info)?;
 

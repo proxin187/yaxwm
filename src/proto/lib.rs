@@ -50,6 +50,9 @@ pub enum Request {
     FocusedBorder,
     NormalBorder,
     BorderWidth,
+    FocusUp,
+    FocusDown,
+    FocusMaster,
     Unknown,
 }
 
@@ -67,6 +70,9 @@ impl From<u8> for Request {
             0x8 => Request::FocusedBorder,
             0x9 => Request::NormalBorder,
             0xa => Request::BorderWidth,
+            0xb => Request::FocusUp,
+            0xc => Request::FocusDown,
+            0xd => Request::FocusMaster,
             _ => Request::Unknown,
         }
     }
@@ -86,7 +92,10 @@ impl From<Request> for u8 {
             Request::FocusedBorder => 0x8,
             Request::NormalBorder => 0x9,
             Request::BorderWidth => 0xa,
-            Request::Unknown => 0xfe
+            Request::FocusUp => 0xb,
+            Request::FocusDown => 0xc,
+            Request::FocusMaster => 0xd,
+            Request::Unknown => 0xfe,
         }
     }
 }
@@ -108,7 +117,7 @@ impl Stream {
         let home = env::var("HOME")?;
 
         Ok(Stream {
-            stream: UnixStream::connect(format!("{home}/.config/yaxum/ipc"))?,
+            stream: UnixStream::connect(format!("{home}/.config/yaxwm/ipc"))?,
         })
     }
 

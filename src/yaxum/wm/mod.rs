@@ -3,9 +3,9 @@ use crate::log::{self, Severity};
 use crate::server::Server;
 use crate::startup;
 
-use yaxi::display::{self, Display, TryClone};
-use yaxi::proto::{Event, EventMask, RevertTo};
-use yaxi::window::{Window, WindowKind};
+use yaxi::display::{self, Display, Atom, TryClone};
+use yaxi::proto::{Event, EventMask, RevertTo, WindowClass};
+use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder, PropFormat, PropMode};
 
 use std::os::unix::net::UnixStream;
 
@@ -37,14 +37,12 @@ impl Workspaces {
         self.workspaces[self.current].remove(index);
     }
 
-    pub fn find(&mut self, wid: u32) -> Option<usize> {
+    pub fn find(&self, wid: u32) -> Option<usize> {
         self.workspaces[self.current].iter().position(|window| window.id() == wid)
     }
 
-    pub fn set_nearest_input_focus(&mut self, index: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let index = index.min(self.workspaces[self.current].len().max(1) - 1);
-
-        if let Some(window) = self.workspaces[self.current].get_mut(index) {
+    pub fn change_focus<F>(&mut self, wid: u32, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(usize) -> usize {
+        if let Some(window) = self.find(wid).and_then(|index| self.workspaces[self.current].get_mut(f(index))) {
             window.set_input_focus(RevertTo::Parent)?;
         }
 
@@ -203,6 +201,34 @@ impl WindowManager {
 
         startup::startup()?;
 
+        self.set_supporting_ewmh()?;
+
+        Ok(())
+    }
+
+    fn set_supporting_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let net_wm_check = self.display.intern_atom("_NET_SUPPORTING_WM_CHECK", false)?;
+        let net_wm_name = self.display.intern_atom("_NET_WM_NAME", false)?;
+        let utf8_string = self.display.intern_atom("UTF8_STRING", false)?;
+
+        let mut window = self.root.create_window(WindowArguments {
+            depth: self.root.depth(),
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            class: WindowClass::InputOutput,
+            border_width: 0,
+            visual: self.root.visual(),
+            values: ValuesBuilder::new(vec![]),
+        })?;
+
+        window.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
+
+        window.change_property(net_wm_name, utf8_string, PropFormat::Format8, PropMode::Replace, b"yaxwm")?;
+
+        self.root.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
+
         Ok(())
     }
 
@@ -251,7 +277,6 @@ impl WindowManager {
 
         for sequence in self.server.incoming()? {
             println!("sequence: {:?}", sequence);
-
             match sequence.request {
                 Request::Workspace => {
                     self.monitors.focused(|monitor| {
@@ -264,6 +289,18 @@ impl WindowManager {
                     self.focused_win(|mut window| window.kill())?;
                 },
                 Request::Close => {
+                },
+                Request::FocusUp | Request::FocusDown | Request::FocusMaster => {
+                    let focus = self.display.get_input_focus()?;
+
+                    self.monitors.focused(|monitor| {
+                        match sequence.request {
+                            Request::FocusUp => monitor.workspace.change_focus(focus.window, |index| index.max(1) - 1),
+                            Request::FocusDown => monitor.workspace.change_focus(focus.window, |index| index + 1),
+                            Request::FocusMaster => monitor.workspace.change_focus(focus.window, |_| 0),
+                            _ => Ok(()),
+                        }
+                    })?;
                 },
                 Request::PaddingTop => self.config.padding.top = sequence.value as u16,
                 Request::PaddingBottom => self.config.padding.bottom = sequence.value as u16,
@@ -308,7 +345,7 @@ impl WindowManager {
                     if let Some(index) = monitor.workspace.find(window) {
                         monitor.workspace.remove(index);
 
-                        monitor.workspace.set_nearest_input_focus(index)?;
+                        monitor.workspace.change_focus(window, |index| index - 1)?;
                     }
 
                     Ok(())
