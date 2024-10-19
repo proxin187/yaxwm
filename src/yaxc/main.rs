@@ -5,28 +5,39 @@ use args::{Args, Argument, Rule};
 
 use proto::{Request, Stream, Sequence};
 
+const ARGUMENTS: [(&str, Rule<Request>); 19] = [
+    ("--kill", Rule::Flag(Request::Kill)),
+    ("--close", Rule::Flag(Request::Close)),
+    ("--workspace", Rule::Integer(Request::Workspace)),
+
+    ("--padding-top", Rule::Integer(Request::PaddingTop)),
+    ("--padding-bottom", Rule::Integer(Request::PaddingBottom)),
+    ("--padding-left", Rule::Integer(Request::PaddingLeft)),
+    ("--padding-right", Rule::Integer(Request::PaddingRight)),
+
+    ("--window-gaps", Rule::Integer(Request::WindowGaps)),
+
+    ("--focused-border", Rule::Hex(Request::FocusedBorder)),
+    ("--normal-border", Rule::Hex(Request::NormalBorder)),
+    ("--border-width", Rule::Integer(Request::BorderWidth)),
+
+    ("--focus-up", Rule::Flag(Request::FocusUp)),
+    ("--focus-down", Rule::Flag(Request::FocusDown)),
+    ("--focus-master", Rule::Flag(Request::FocusMaster)),
+
+    ("--float-toggle", Rule::Flag(Request::FloatToggle)),
+    ("--float-left", Rule::Integer(Request::FloatLeft)),
+    ("--float-right", Rule::Integer(Request::FloatRight)),
+    ("--float-up", Rule::Integer(Request::FloatUp)),
+    ("--float-down", Rule::Integer(Request::FloatDown)),
+];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Args<Request> = Args::new();
 
-    args.append("--kill", Rule::Flag(Request::Kill));
-    args.append("--close", Rule::Flag(Request::Close));
-    args.append("--workspace", Rule::Integer(Request::Workspace));
-
-    args.append("--padding-top", Rule::Integer(Request::PaddingTop));
-    args.append("--padding-bottom", Rule::Integer(Request::PaddingBottom));
-    args.append("--padding-left", Rule::Integer(Request::PaddingLeft));
-    args.append("--padding-right", Rule::Integer(Request::PaddingRight));
-
-    args.append("--window-gaps", Rule::Integer(Request::WindowGaps));
-
-    args.append("--focused-border", Rule::Hex(Request::FocusedBorder));
-    args.append("--normal-border", Rule::Hex(Request::NormalBorder));
-    args.append("--border-width", Rule::Integer(Request::BorderWidth));
-
-    args.append("--focus-up", Rule::Flag(Request::FocusUp));
-    args.append("--focus-down", Rule::Flag(Request::FocusDown));
-    args.append("--focus-master", Rule::Flag(Request::FocusMaster));
+    for (key, value) in ARGUMENTS {
+        args.append(key, value);
+    }
 
     let mut stream = Stream::connect()?;
 

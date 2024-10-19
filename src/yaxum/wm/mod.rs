@@ -12,14 +12,28 @@ use std::os::unix::net::UnixStream;
 use proto::Request;
 
 
+pub struct Client {
+    window: Window<UnixStream>,
+    float: bool,
+}
+
+impl Client {
+    pub fn new(window: Window<UnixStream>, float: bool) -> Client {
+        Client {
+            window,
+            float,
+        }
+    }
+}
+
 pub struct Workspaces {
-    workspaces: Vec<Vec<Window<UnixStream>>>,
+    workspaces: Vec<Vec<Client>>,
     current: usize,
 }
 
 impl Workspaces {
     pub fn new(count: usize) -> Workspaces {
-        let mut workspaces: Vec<Vec<Window<UnixStream>>> = Vec::new();
+        let mut workspaces: Vec<Vec<Client>> = Vec::new();
 
         workspaces.resize_with(count, Vec::new);
 
@@ -29,8 +43,8 @@ impl Workspaces {
         }
     }
 
-    pub fn insert(&mut self, window: Window<UnixStream>) {
-        self.workspaces[self.current].push(window);
+    pub fn insert(&mut self, client: Client) {
+        self.workspaces[self.current].push(client);
     }
 
     pub fn remove(&mut self, index: usize) {
@@ -38,21 +52,21 @@ impl Workspaces {
     }
 
     pub fn find(&self, wid: u32) -> Option<usize> {
-        self.workspaces[self.current].iter().position(|window| window.id() == wid)
+        self.workspaces[self.current].iter().position(|client| client.window.id() == wid)
     }
 
     pub fn change_focus<F>(&mut self, wid: u32, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(usize) -> usize {
-        if let Some(window) = self.find(wid).and_then(|index| self.workspaces[self.current].get_mut(f(index))) {
-            window.set_input_focus(RevertTo::Parent)?;
+        if let Some(client) = self.find(wid).and_then(|index| self.workspaces[self.current].get_mut(f(index))) {
+            client.window.set_input_focus(RevertTo::Parent)?;
         }
 
         Ok(())
     }
 
-    pub fn map_windows<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Window<UnixStream>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn map_clients<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Client) -> Result<(), Box<dyn std::error::Error>> {
         for workspace in self.workspaces.iter_mut() {
-            for window in workspace {
-                f(window)?;
+            for client in workspace {
+                f(client)?;
             }
         }
 
@@ -64,16 +78,18 @@ impl Workspaces {
             if w_idx == self.current {
                 let windows = workspace.len();
 
-                for (index, window) in workspace.iter_mut().enumerate() {
-                    let win = (index + 1 < windows).then(|| area.split()).unwrap_or(area);
+                for (index, client) in workspace.iter_mut().enumerate() {
+                    if !client.float {
+                        let win = (index + 1 < windows).then(|| area.split()).unwrap_or(area);
 
-                    window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
+                        client.window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
+                    }
 
-                    window.map(WindowKind::Window)?;
+                    client.window.map(WindowKind::Window)?;
                 }
             } else {
-                for window in workspace {
-                    window.unmap(WindowKind::Window)?;
+                for client in workspace {
+                    client.window.unmap(WindowKind::Window)?;
                 }
             }
         }
@@ -240,6 +256,7 @@ impl WindowManager {
         Ok(())
     }
 
+    /*
     fn focused_win<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(Window<UnixStream>) -> Result<(), Box<dyn std::error::Error>> {
         let focus = self.display.get_input_focus()?;
 
@@ -249,16 +266,29 @@ impl WindowManager {
             Ok(())
         }
     }
+    */
+
+    fn focused_client<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Client) -> Result<(), Box<dyn std::error::Error>> {
+        let focus = self.display.get_input_focus()?;
+
+        self.monitors.focused(|monitor| {
+            if let Some(index) = monitor.workspace.find(focus.window) {
+                f(&mut monitor.workspace.workspaces[monitor.workspace.current][index])?;
+            }
+
+            Ok(())
+        })
+    }
 
     fn set_focused_border(&mut self, focused: u32) -> Result<(), Box<dyn std::error::Error>> {
         if focused != self.root.id() {
             let borders = self.config.windows.borders;
 
             self.monitors.focused(|monitor| {
-                monitor.workspace.map_windows(|window| {
-                    window.set_border_width(borders.width)?;
+                monitor.workspace.map_clients(|client| {
+                    client.window.set_border_width(borders.width)?;
 
-                    window.set_border_pixel(borders.normal)?;
+                    client.window.set_border_pixel(borders.normal)?;
 
                     Ok(())
                 })?;
@@ -286,7 +316,7 @@ impl WindowManager {
                     })?;
                 },
                 Request::Kill => {
-                    self.focused_win(|mut window| window.kill())?;
+                    self.focused_client(|client| client.window.kill())?;
                 },
                 Request::Close => {
                 },
@@ -310,6 +340,28 @@ impl WindowManager {
                 Request::FocusedBorder => self.config.windows.borders.focused = sequence.value,
                 Request::NormalBorder => self.config.windows.borders.normal = sequence.value,
                 Request::BorderWidth => self.config.windows.borders.width = sequence.value as u16,
+                Request::FloatToggle => {
+                    self.focused_client(|client| {
+                        client.float = !client.float;
+
+                        Ok(())
+                    })?;
+                },
+                Request::FloatRight => {
+                    // TODO: we need get window attributes
+                    /*
+                    self.focused_client(|client| {
+                        if client.float {
+                            client.window.mov()?;
+                        }
+
+                        Ok((())
+                    })?;
+                    */
+                },
+                Request::FloatLeft => {},
+                Request::FloatUp => {},
+                Request::FloatDown => {},
                 Request::Unknown => {},
             }
         }
@@ -323,7 +375,7 @@ impl WindowManager {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
                 self.monitors.focused(|monitor| {
-                    monitor.workspace.insert(self.display.window_from_id(window)?);
+                    monitor.workspace.insert(Client::new(self.display.window_from_id(window)?, false));
 
                     Ok(())
                 })?;

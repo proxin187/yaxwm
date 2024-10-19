@@ -53,9 +53,15 @@ pub enum Request {
     FocusUp,
     FocusDown,
     FocusMaster,
+    FloatToggle,
+    FloatLeft,
+    FloatRight,
+    FloatUp,
+    FloatDown,
     Unknown,
 }
 
+/*
 impl From<u8> for Request {
     fn from(value: u8) -> Request {
         match value {
@@ -73,6 +79,7 @@ impl From<u8> for Request {
             0xb => Request::FocusUp,
             0xc => Request::FocusDown,
             0xd => Request::FocusMaster,
+            0xe => Request::FloatToggle,
             _ => Request::Unknown,
         }
     }
@@ -95,10 +102,12 @@ impl From<Request> for u8 {
             Request::FocusUp => 0xb,
             Request::FocusDown => 0xc,
             Request::FocusMaster => 0xd,
+            Request::FloatToggle => 0xe,
             Request::Unknown => 0xfe,
         }
     }
 }
+*/
 
 pub struct Stream {
     stream: UnixStream,
