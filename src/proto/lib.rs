@@ -58,56 +58,12 @@ pub enum Request {
     FloatRight,
     FloatUp,
     FloatDown,
+    ResizeLeft,
+    ResizeRight,
+    ResizeUp,
+    ResizeDown,
     Unknown,
 }
-
-/*
-impl From<u8> for Request {
-    fn from(value: u8) -> Request {
-        match value {
-            0x0 => Request::Workspace,
-            0x1 => Request::Kill,
-            0x2 => Request::Close,
-            0x3 => Request::PaddingTop,
-            0x4 => Request::PaddingBottom,
-            0x5 => Request::PaddingLeft,
-            0x6 => Request::PaddingRight,
-            0x7 => Request::WindowGaps,
-            0x8 => Request::FocusedBorder,
-            0x9 => Request::NormalBorder,
-            0xa => Request::BorderWidth,
-            0xb => Request::FocusUp,
-            0xc => Request::FocusDown,
-            0xd => Request::FocusMaster,
-            0xe => Request::FloatToggle,
-            _ => Request::Unknown,
-        }
-    }
-}
-
-impl From<Request> for u8 {
-    fn from(request: Request) -> u8 {
-        match request {
-            Request::Workspace => 0x0,
-            Request::Kill => 0x1,
-            Request::Close => 0x2,
-            Request::PaddingTop => 0x3,
-            Request::PaddingBottom => 0x4,
-            Request::PaddingLeft => 0x5,
-            Request::PaddingRight => 0x6,
-            Request::WindowGaps => 0x7,
-            Request::FocusedBorder => 0x8,
-            Request::NormalBorder => 0x9,
-            Request::BorderWidth => 0xa,
-            Request::FocusUp => 0xb,
-            Request::FocusDown => 0xc,
-            Request::FocusMaster => 0xd,
-            Request::FloatToggle => 0xe,
-            Request::Unknown => 0xfe,
-        }
-    }
-}
-*/
 
 pub struct Stream {
     stream: UnixStream,

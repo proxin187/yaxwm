@@ -4,7 +4,7 @@ use crate::server::Server;
 use crate::startup;
 
 use yaxi::display::{self, Display, Atom, TryClone};
-use yaxi::proto::{Event, EventMask, RevertTo, WindowClass};
+use yaxi::proto::{Event, EventMask, KeyMask, Button, Cursor, RevertTo, WindowClass, PointerMode, KeyboardMode};
 use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder, PropFormat, PropMode};
 
 use std::os::unix::net::UnixStream;
@@ -76,11 +76,13 @@ impl Workspaces {
     pub fn tile(&mut self, mut area: Area, gaps: u16) -> Result<(), Box<dyn std::error::Error>> {
         for (w_idx, workspace) in self.workspaces.iter_mut().enumerate() {
             if w_idx == self.current {
-                let windows = workspace.len();
+                let floating = workspace.iter().map(|client| client.float).collect::<Vec<bool>>();
 
                 for (index, client) in workspace.iter_mut().enumerate() {
                     if !client.float {
-                        let win = (index + 1 < windows).then(|| area.split()).unwrap_or(area);
+                        let tiled_clients_left = floating[index + 1..].iter().filter(|float| !**float).count();
+
+                        let win = (tiled_clients_left > 0).then(|| area.split()).unwrap_or(area);
 
                         client.window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
                     }
@@ -183,12 +185,18 @@ impl Monitors {
     }
 }
 
+pub struct Drag {
+    x: u16,
+    y: u16,
+}
+
 pub struct WindowManager {
     display: Display<UnixStream>,
     root: Window<UnixStream>,
     monitors: Monitors,
     server: Server,
     config: Config,
+    drag: Option<Drag>,
     should_close: bool,
 }
 
@@ -206,12 +214,32 @@ impl WindowManager {
             }], root),
             server: Server::new(),
             config: Config::default(),
+            drag: None,
             should_close: false,
         })
     }
 
     fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.root.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
+        self.root.select_input(&[
+            EventMask::SubstructureNotify,
+            EventMask::SubstructureRedirect,
+            EventMask::EnterWindow,
+            EventMask::FocusChange,
+        ])?;
+
+        // TODO: mouse movement and resize of floating window
+        // TODO: we need to implement these events in the event mask
+
+        self.root.grab_button(
+            Button::Button1,
+            vec![KeyMask::Mod4],
+            vec![EventMask::ButtonPress, EventMask::ButtonRelease, EventMask::ButtonMotion],
+            0,
+            Cursor::Nop,
+            PointerMode::Asynchronous,
+            KeyboardMode::Asynchronous,
+            true,
+        )?;
 
         self.server.listen()?;
 
@@ -256,24 +284,26 @@ impl WindowManager {
         Ok(())
     }
 
-    /*
-    fn focused_win<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(Window<UnixStream>) -> Result<(), Box<dyn std::error::Error>> {
-        let focus = self.display.get_input_focus()?;
-
-        if focus.window != self.root.id() {
-            f(self.display.window_from_id(focus.window)?)
-        } else {
-            Ok(())
-        }
-    }
-    */
-
     fn focused_client<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Client) -> Result<(), Box<dyn std::error::Error>> {
         let focus = self.display.get_input_focus()?;
 
         self.monitors.focused(|monitor| {
             if let Some(index) = monitor.workspace.find(focus.window) {
                 f(&mut monitor.workspace.workspaces[monitor.workspace.current][index])?;
+            }
+
+            Ok(())
+        })
+    }
+
+    fn mov_resize_focused<F>(&mut self, transform: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(u16, u16, u16, u16) -> (u16, u16, u16, u16) {
+        self.focused_client(|client| {
+            if client.float {
+                let geometry = client.window.get_geometry()?;
+
+                let (x, y, width, height) = transform(geometry.x, geometry.y, geometry.width, geometry.height);
+
+                client.window.mov_resize(x, y, width, height)?;
             }
 
             Ok(())
@@ -346,22 +376,17 @@ impl WindowManager {
 
                         Ok(())
                     })?;
-                },
-                Request::FloatRight => {
-                    // TODO: we need get window attributes
-                    /*
-                    self.focused_client(|client| {
-                        if client.float {
-                            client.window.mov()?;
-                        }
 
-                        Ok((())
-                    })?;
-                    */
+                    self.tile()?;
                 },
-                Request::FloatLeft => {},
-                Request::FloatUp => {},
-                Request::FloatDown => {},
+                Request::FloatRight => self.mov_resize_focused(|x, y, width, height| (x + sequence.value as u16, y, width, height))?,
+                Request::FloatLeft => self.mov_resize_focused(|x, y, width, height| (x - (sequence.value as u16).min(x), y, width, height))?,
+                Request::FloatUp => self.mov_resize_focused(|x, y, width, height| (x, y - (sequence.value as u16).min(y), width, height))?,
+                Request::FloatDown => self.mov_resize_focused(|x, y, width, height| (x, y + sequence.value as u16, width, height))?,
+                Request::ResizeRight => self.mov_resize_focused(|x, y, width, height| (x, y, width + sequence.value as u16, height))?,
+                Request::ResizeLeft => self.mov_resize_focused(|x, y, width, height| (x, y, width - (sequence.value as u16).min(width), height))?,
+                Request::ResizeUp => self.mov_resize_focused(|x, y, width, height| (x, y, width, height - (sequence.value as u16).min(height)))?,
+                Request::ResizeDown => self.mov_resize_focused(|x, y, width, height| (x, y, width, height + sequence.value as u16))?,
                 Request::Unknown => {},
             }
         }

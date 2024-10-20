@@ -19,6 +19,7 @@ pub struct Borders {
 pub struct Windows {
     pub borders: Borders,
     pub gaps: u16,
+    pub mouse_movement: bool,
 }
 
 #[derive(Debug, Default)]

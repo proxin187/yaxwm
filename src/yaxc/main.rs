@@ -5,7 +5,7 @@ use args::{Args, Argument, Rule};
 
 use proto::{Request, Stream, Sequence};
 
-const ARGUMENTS: [(&str, Rule<Request>); 19] = [
+const ARGUMENTS: [(&str, Rule<Request>); 23] = [
     ("--kill", Rule::Flag(Request::Kill)),
     ("--close", Rule::Flag(Request::Close)),
     ("--workspace", Rule::Integer(Request::Workspace)),
@@ -30,6 +30,11 @@ const ARGUMENTS: [(&str, Rule<Request>); 19] = [
     ("--float-right", Rule::Integer(Request::FloatRight)),
     ("--float-up", Rule::Integer(Request::FloatUp)),
     ("--float-down", Rule::Integer(Request::FloatDown)),
+
+    ("--resize-left", Rule::Integer(Request::ResizeLeft)),
+    ("--resize-right", Rule::Integer(Request::ResizeRight)),
+    ("--resize-up", Rule::Integer(Request::ResizeUp)),
+    ("--resize-down", Rule::Integer(Request::ResizeDown)),
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
