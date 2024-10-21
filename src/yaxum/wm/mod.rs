@@ -3,8 +3,9 @@ use crate::log::{self, Severity};
 use crate::server::Server;
 use crate::startup;
 
+use yaxi::display::request::GetGeometryResponse;
 use yaxi::display::{self, Display, Atom, TryClone};
-use yaxi::proto::{Event, EventMask, KeyMask, Button, Cursor, RevertTo, WindowClass, PointerMode, KeyboardMode};
+use yaxi::proto::{Event, EventMask, EventKind, KeyMask, Button, Cursor, RevertTo, WindowClass, PointerMode, KeyboardMode};
 use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder, PropFormat, PropMode};
 
 use std::os::unix::net::UnixStream;
@@ -53,6 +54,12 @@ impl Workspaces {
 
     pub fn find(&self, wid: u32) -> Option<usize> {
         self.workspaces[self.current].iter().position(|client| client.window.id() == wid)
+    }
+
+    pub fn is_tiled(&self, wid: u32) -> bool {
+        self.find(wid)
+            .and_then(|index| Some(self.workspaces[self.current][index].float))
+            .unwrap_or(false)
     }
 
     pub fn change_focus<F>(&mut self, wid: u32, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(usize) -> usize {
@@ -164,6 +171,12 @@ impl Monitors {
         }
     }
 
+    pub fn is_tiled(&mut self, wid: u32) -> bool {
+        self.monitors.iter()
+            .map(|monitor| monitor.workspace.is_tiled(wid))
+            .any(|tiled| tiled)
+    }
+
     pub fn focused<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>> {
         let pointer = self.root.query_pointer()?;
 
@@ -185,9 +198,24 @@ impl Monitors {
     }
 }
 
-pub struct Drag {
+pub struct Grab {
+    button: Button,
+    window: Window<UnixStream>,
+    geometry: GetGeometryResponse,
     x: u16,
     y: u16,
+}
+
+impl Grab {
+    pub fn new(button: Button, window: Window<UnixStream>, geometry: GetGeometryResponse, x: u16, y: u16) -> Grab {
+        Grab {
+            button,
+            window,
+            geometry,
+            x,
+            y,
+        }
+    }
 }
 
 pub struct WindowManager {
@@ -196,7 +224,7 @@ pub struct WindowManager {
     monitors: Monitors,
     server: Server,
     config: Config,
-    drag: Option<Drag>,
+    grab: Option<Grab>,
     should_close: bool,
 }
 
@@ -214,7 +242,7 @@ impl WindowManager {
             }], root),
             server: Server::new(),
             config: Config::default(),
-            drag: None,
+            grab: None,
             should_close: false,
         })
     }
@@ -227,19 +255,18 @@ impl WindowManager {
             EventMask::FocusChange,
         ])?;
 
-        // TODO: mouse movement and resize of floating window
-        // TODO: we need to implement these events in the event mask
-
-        self.root.grab_button(
-            Button::Button1,
-            vec![KeyMask::Mod4],
-            vec![EventMask::ButtonPress, EventMask::ButtonRelease, EventMask::ButtonMotion],
-            0,
-            Cursor::Nop,
-            PointerMode::Asynchronous,
-            KeyboardMode::Asynchronous,
-            true,
-        )?;
+        for button in [Button::Button1, Button::Button3] {
+            self.root.grab_button(
+                button,
+                vec![KeyMask::Mod4],
+                vec![EventMask::ButtonPress, EventMask::ButtonRelease, EventMask::ButtonMotion],
+                Cursor::Nop,
+                PointerMode::Asynchronous,
+                KeyboardMode::Asynchronous,
+                true,
+                0,
+            )?;
+        }
 
         self.server.listen()?;
 
@@ -439,6 +466,51 @@ impl WindowManager {
             },
             Event::FocusIn { window, .. } => {
                 self.set_focused_border(window)?;
+            },
+            Event::ButtonEvent { kind, coordinates, window, root, subwindow, state, button, send_event } => match kind {
+                EventKind::Press => {
+                    // TODO: is_tiled doesnt propeerly work and therefore allows the user to move
+                    // tiled windows
+                    if !self.monitors.is_tiled(window) {
+                        let mut window = self.display.window_from_id(subwindow)?;
+
+                        window.grab_pointer(
+                            vec![EventMask::PointerMotion, EventMask::ButtonRelease],
+                            Cursor::Nop,
+                            PointerMode::Asynchronous,
+                            KeyboardMode::Asynchronous,
+                            true,
+                            0,
+                        )?;
+
+                        let geometry = window.get_geometry()?;
+
+                        self.grab.replace(Grab::new(button, window, geometry, coordinates.root_x, coordinates.root_y));
+                    }
+                },
+                EventKind::Release => {
+                    if self.grab.is_some() {
+                        self.display.ungrab_pointer()?;
+
+                        self.grab = None;
+                    }
+                },
+            },
+            Event::MotionNotify { coordinates, window, root, subwindow, state, send_event } => {
+                if let Some(grab) = &mut self.grab {
+                    let x_diff = coordinates.root_x as i16 - grab.x as i16;
+                    let y_diff = coordinates.root_y as i16 - grab.y as i16;
+
+                    match grab.button {
+                        Button::Button1 => {
+                            grab.window.mov((grab.geometry.x as i16 + x_diff) as u16, (grab.geometry.y as i16 + y_diff) as u16)?;
+                        },
+                        Button::Button3 => {
+                            grab.window.resize((grab.geometry.width as i16 + x_diff) as u16, (grab.geometry.height as i16 + y_diff) as u16)?;
+                        },
+                        _ => {},
+                    }
+                }
             },
             Event::ConfigureRequest { stack_mode, parent, window, sibling, x, y, width, height, border_width, mask } => {
                 // TODO: looks like there is something wrong with configure request,
