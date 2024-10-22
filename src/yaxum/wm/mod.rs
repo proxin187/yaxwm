@@ -44,6 +44,10 @@ impl Workspaces {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.workspaces.len()
+    }
+
     pub fn insert(&mut self, client: Client) {
         self.workspaces[self.current].push(client);
     }
@@ -56,10 +60,11 @@ impl Workspaces {
         self.workspaces[self.current].iter().position(|client| client.window.id() == wid)
     }
 
-    pub fn is_tiled(&self, wid: u32) -> bool {
-        self.find(wid)
-            .and_then(|index| Some(self.workspaces[self.current][index].float))
-            .unwrap_or(false)
+    pub fn is_float(&self, wid: u32) -> bool {
+        match self.find(wid) {
+            Some(index) => self.workspaces[self.current][index].float,
+            None => false,
+        }
     }
 
     pub fn change_focus<F>(&mut self, wid: u32, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(usize) -> usize {
@@ -173,8 +178,8 @@ impl Monitors {
 
     pub fn is_tiled(&mut self, wid: u32) -> bool {
         self.monitors.iter()
-            .map(|monitor| monitor.workspace.is_tiled(wid))
-            .any(|tiled| tiled)
+            .map(|monitor| monitor.workspace.is_float(wid))
+            .any(|float| !float)
     }
 
     pub fn focused<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>> {
@@ -338,7 +343,7 @@ impl WindowManager {
     }
 
     fn set_focused_border(&mut self, focused: u32) -> Result<(), Box<dyn std::error::Error>> {
-        if focused != self.root.id() {
+        if focused != self.root.id() && focused != 1 && focused != 0 {
             let borders = self.config.windows.borders;
 
             self.monitors.focused(|monitor| {
@@ -359,15 +364,22 @@ impl WindowManager {
         Ok(())
     }
 
-    fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: we want to auto retile when the config is updated
+    fn update_borders(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let focus = self.display.get_input_focus()?;
 
+        self.set_focused_border(focus.window)
+    }
+
+    fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for sequence in self.server.incoming()? {
             println!("sequence: {:?}", sequence);
+
             match sequence.request {
                 Request::Workspace => {
                     self.monitors.focused(|monitor| {
-                        monitor.workspace.current = sequence.value.max(1) as usize - 1;
+                        if sequence.value.max(1) - 1 < monitor.workspace.len() as u32 {
+                            monitor.workspace.current = sequence.value.max(1) as usize - 1;
+                        }
 
                         monitor.workspace.tile(monitor.area.pad(self.config.padding), self.config.windows.gaps)
                     })?;
@@ -389,14 +401,28 @@ impl WindowManager {
                         }
                     })?;
                 },
-                Request::PaddingTop => self.config.padding.top = sequence.value as u16,
-                Request::PaddingBottom => self.config.padding.bottom = sequence.value as u16,
-                Request::PaddingLeft => self.config.padding.left = sequence.value as u16,
-                Request::PaddingRight => self.config.padding.right = sequence.value as u16,
-                Request::WindowGaps => self.config.windows.gaps = sequence.value as u16,
-                Request::FocusedBorder => self.config.windows.borders.focused = sequence.value,
-                Request::NormalBorder => self.config.windows.borders.normal = sequence.value,
-                Request::BorderWidth => self.config.windows.borders.width = sequence.value as u16,
+                Request::PaddingTop | Request::PaddingBottom | Request::PaddingLeft | Request::PaddingRight | Request::WindowGaps => {
+                    match sequence.request {
+                        Request::PaddingTop => self.config.padding.top = sequence.value as u16,
+                        Request::PaddingBottom => self.config.padding.bottom = sequence.value as u16,
+                        Request::PaddingLeft => self.config.padding.left = sequence.value as u16,
+                        Request::PaddingRight => self.config.padding.right = sequence.value as u16,
+                        Request::WindowGaps => self.config.windows.gaps = sequence.value as u16,
+                        _ => unreachable!(),
+                    }
+
+                    self.tile()?;
+                },
+                Request::FocusedBorder | Request::NormalBorder | Request::BorderWidth => {
+                    match sequence.request {
+                        Request::FocusedBorder => self.config.windows.borders.focused = sequence.value,
+                        Request::NormalBorder => self.config.windows.borders.normal = sequence.value,
+                        Request::BorderWidth => self.config.windows.borders.width = sequence.value as u16,
+                        _ => unreachable!(),
+                    }
+
+                    self.update_borders()?;
+                },
                 Request::FloatToggle => {
                     self.focused_client(|client| {
                         client.float = !client.float;
@@ -414,6 +440,8 @@ impl WindowManager {
                 Request::ResizeLeft => self.mov_resize_focused(|x, y, width, height| (x, y, width - (sequence.value as u16).min(width), height))?,
                 Request::ResizeUp => self.mov_resize_focused(|x, y, width, height| (x, y, width, height - (sequence.value as u16).min(height)))?,
                 Request::ResizeDown => self.mov_resize_focused(|x, y, width, height| (x, y, width, height + sequence.value as u16))?,
+                Request::EnableMouse => self.config.windows.mouse_movement = true,
+                Request::DisableMouse => self.config.windows.mouse_movement = false,
                 Request::Unknown => {},
             }
         }
@@ -467,12 +495,12 @@ impl WindowManager {
             Event::FocusIn { window, .. } => {
                 self.set_focused_border(window)?;
             },
-            Event::ButtonEvent { kind, coordinates, window, root, subwindow, state, button, send_event } => match kind {
+            Event::ButtonEvent { kind, coordinates, subwindow, button, .. } => match kind {
                 EventKind::Press => {
-                    // TODO: is_tiled doesnt propeerly work and therefore allows the user to move
-                    // tiled windows
-                    if !self.monitors.is_tiled(window) {
+                    if !self.monitors.is_tiled(subwindow) && self.config.windows.mouse_movement {
                         let mut window = self.display.window_from_id(subwindow)?;
+
+                        window.raise()?;
 
                         window.grab_pointer(
                             vec![EventMask::PointerMotion, EventMask::ButtonRelease],
@@ -533,6 +561,8 @@ impl WindowManager {
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.setup()?;
+
+        // TODO: multi monitor support using xinerama
 
         log::write("yaxum is running\n", Severity::Info)?;
 

@@ -62,6 +62,8 @@ pub enum Request {
     ResizeRight,
     ResizeUp,
     ResizeDown,
+    EnableMouse,
+    DisableMouse,
     Unknown,
 }
 
