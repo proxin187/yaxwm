@@ -5,7 +5,7 @@ use args::{Args, Argument, Rule};
 
 use proto::{Request, Stream, Sequence};
 
-const ARGUMENTS: [(&str, Rule<Request>); 25] = [
+const ARGUMENTS: [(&str, Rule<Request>); 26] = [
     ("--kill", Rule::Flag(Request::Kill)),
     ("--close", Rule::Flag(Request::Close)),
     ("--workspace", Rule::Integer(Request::Workspace)),
@@ -38,6 +38,8 @@ const ARGUMENTS: [(&str, Rule<Request>); 25] = [
 
     ("--enable-mouse", Rule::Flag(Request::EnableMouse)),
     ("--disable-mouse", Rule::Flag(Request::DisableMouse)),
+
+    ("--workspaces-per-monitor", Rule::Integer(Request::WorkspacePerMonitor)),
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

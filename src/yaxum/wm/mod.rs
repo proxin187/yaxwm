@@ -33,14 +33,22 @@ pub struct Workspaces {
 }
 
 impl Workspaces {
-    pub fn new(count: usize) -> Workspaces {
-        let mut workspaces: Vec<Vec<Client>> = Vec::new();
-
-        workspaces.resize_with(count, Vec::new);
-
+    pub fn new() -> Workspaces {
         Workspaces {
-            workspaces,
+            workspaces: Vec::new(),
             current: 0,
+        }
+    }
+
+    pub fn resize(&mut self, size: usize) {
+        if size >= self.len() {
+            self.workspaces.resize_with(size, Vec::new);
+        } else if size > 0 {
+            let excess = self.workspaces.drain(size..self.len()).flatten().collect::<Vec<Client>>();
+
+            self.workspaces[size - 1].extend(excess);
+
+            self.workspaces.truncate(self.len() - size);
         }
     }
 
@@ -169,11 +177,15 @@ pub struct Monitors {
 }
 
 impl Monitors {
-    pub fn new(monitors: Vec<Monitor>, root: Window<UnixStream>) -> Monitors {
+    pub fn new(root: Window<UnixStream>) -> Monitors {
         Monitors {
-            monitors,
+            monitors: Vec::new(),
             root,
         }
+    }
+
+    pub fn append(&mut self, monitor: Monitor) {
+        self.monitors.push(monitor);
     }
 
     pub fn is_tiled(&mut self, wid: u32) -> bool {
@@ -241,10 +253,7 @@ impl WindowManager {
         Ok(WindowManager {
             display,
             root: *root.try_clone()?,
-            monitors: Monitors::new(vec![Monitor {
-                area: Area::new(0, 0, 800, 600),
-                workspace: Workspaces::new(4),
-            }], root),
+            monitors: Monitors::new(root),
             server: Server::new(),
             config: Config::default(),
             grab: None,
@@ -275,9 +284,24 @@ impl WindowManager {
 
         self.server.listen()?;
 
+        self.set_supporting_ewmh()?;
+
+        self.load_monitors()?;
+
         startup::startup()?;
 
-        self.set_supporting_ewmh()?;
+        Ok(())
+    }
+
+    fn load_monitors(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut xinerama = self.display.query_xinerama()?;
+
+        for screen in xinerama.query_screens()? {
+            self.monitors.append(Monitor {
+                area: Area::new(screen.x, screen.y, screen.width, screen.height),
+                workspace: Workspaces::new(),
+            });
+        }
 
         Ok(())
     }
@@ -442,6 +466,13 @@ impl WindowManager {
                 Request::ResizeDown => self.mov_resize_focused(|x, y, width, height| (x, y, width, height + sequence.value as u16))?,
                 Request::EnableMouse => self.config.windows.mouse_movement = true,
                 Request::DisableMouse => self.config.windows.mouse_movement = false,
+                Request::WorkspacePerMonitor => {
+                    self.monitors.all(|monitor| {
+                        monitor.workspace.resize(sequence.value as usize);
+
+                        Ok(())
+                    })?;
+                },
                 Request::Unknown => {},
             }
         }
@@ -524,7 +555,7 @@ impl WindowManager {
                     }
                 },
             },
-            Event::MotionNotify { coordinates, window, root, subwindow, state, send_event } => {
+            Event::MotionNotify { coordinates, .. } => {
                 if let Some(grab) = &mut self.grab {
                     let x_diff = coordinates.root_x as i16 - grab.x as i16;
                     let y_diff = coordinates.root_y as i16 - grab.y as i16;
@@ -540,7 +571,7 @@ impl WindowManager {
                     }
                 }
             },
-            Event::ConfigureRequest { stack_mode, parent, window, sibling, x, y, width, height, border_width, mask } => {
+            Event::ConfigureRequest { window, .. } => {
                 // TODO: looks like there is something wrong with configure request,
                 //
                 // maybe xterm waits for a configure notify after it sends the configure request?

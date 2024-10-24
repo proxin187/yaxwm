@@ -64,6 +64,7 @@ pub enum Request {
     ResizeDown,
     EnableMouse,
     DisableMouse,
+    WorkspacePerMonitor,
     Unknown,
 }
 

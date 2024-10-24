@@ -17,4 +17,4 @@ path = "src/proto/lib.rs"
 
 
 [dependencies]
-yaxi = { path = "../xrs" }
+yaxi = { path = "../xrs", features = ["xinerama"] }
