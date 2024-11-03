@@ -4,10 +4,10 @@ version = 3
 
 [[package]]
 name = "yaxi"
-version = "0.1.30"
+version = "0.1.41"
 
 [[package]]
-name = "yaxum"
+name = "yaxiwm"
 version = "0.1.0"
 dependencies = [
  "yaxi",

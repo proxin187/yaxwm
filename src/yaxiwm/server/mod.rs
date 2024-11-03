@@ -54,7 +54,7 @@ pub struct Listener {
 impl Listener {
     pub fn new(incoming: Arc<Mutex<Vec<Sequence>>>) -> Result<Listener, Box<dyn std::error::Error>> {
         let home = env::var("HOME")?;
-        let path = format!("{home}/.config/yaxwm/ipc");
+        let path = format!("{home}/.config/yaxiwm/ipc");
 
         if fs::exists(&path)? {
             fs::remove_file(&path)?;

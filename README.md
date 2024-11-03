@@ -11,6 +11,7 @@ YaxWM is a work-in-progress pure rust, x11 window manager with its own x11 imple
 
 ## Features
 - [X] Multi-monitor support using Xinerama
+- [X] Comprehensive Documentation
 
 ## License
 yaxwm is licensed under the MIT License.

@@ -65,6 +65,8 @@ pub enum Request {
     EnableMouse,
     DisableMouse,
     WorkspacePerMonitor,
+    MonitorNext,
+    MonitorPrevious,
     Unknown,
 }
 
@@ -85,7 +87,7 @@ impl Stream {
         let home = env::var("HOME")?;
 
         Ok(Stream {
-            stream: UnixStream::connect(format!("{home}/.config/yaxwm/ipc"))?,
+            stream: UnixStream::connect(format!("{home}/.config/yaxiwm/ipc"))?,
         })
     }
 

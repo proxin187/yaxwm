@@ -1,11 +1,11 @@
 [package]
-name = "yaxum"
+name = "yaxiwm"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "yaxum"
-path = "src/yaxum/main.rs"
+name = "yaxiwm"
+path = "src/yaxiwm/main.rs"
 
 [[bin]]
 name = "yaxc"

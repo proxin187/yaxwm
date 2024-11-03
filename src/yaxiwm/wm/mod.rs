@@ -4,22 +4,20 @@ use crate::server::Server;
 use crate::startup;
 
 use yaxi::display::request::GetGeometryResponse;
-use yaxi::display::{self, Display, Atom, TryClone};
-use yaxi::proto::{Event, EventMask, EventKind, KeyMask, Button, Cursor, RevertTo, WindowClass, PointerMode, KeyboardMode};
+use yaxi::display::{self, Display, Atom};
+use yaxi::proto::{Event, EventMask, EventKind, KeyMask, Button, Cursor, RevertTo, WindowClass, PointerMode, KeyboardMode, ClientMessageData};
 use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder, PropFormat, PropMode};
-
-use std::os::unix::net::UnixStream;
 
 use proto::Request;
 
 
 pub struct Client {
-    window: Window<UnixStream>,
+    window: Window,
     float: bool,
 }
 
 impl Client {
-    pub fn new(window: Window<UnixStream>, float: bool) -> Client {
+    pub fn new(window: Window, float: bool) -> Client {
         Client {
             window,
             float,
@@ -173,11 +171,11 @@ pub struct Monitor {
 
 pub struct Monitors {
     monitors: Vec<Monitor>,
-    root: Window<UnixStream>,
+    root: Window,
 }
 
 impl Monitors {
-    pub fn new(root: Window<UnixStream>) -> Monitors {
+    pub fn new(root: Window) -> Monitors {
         Monitors {
             monitors: Vec::new(),
             root,
@@ -217,14 +215,14 @@ impl Monitors {
 
 pub struct Grab {
     button: Button,
-    window: Window<UnixStream>,
+    window: Window,
     geometry: GetGeometryResponse,
     x: u16,
     y: u16,
 }
 
 impl Grab {
-    pub fn new(button: Button, window: Window<UnixStream>, geometry: GetGeometryResponse, x: u16, y: u16) -> Grab {
+    pub fn new(button: Button, window: Window, geometry: GetGeometryResponse, x: u16, y: u16) -> Grab {
         Grab {
             button,
             window,
@@ -235,27 +233,40 @@ impl Grab {
     }
 }
 
+#[derive(Clone)]
+pub struct Atoms {
+    wm_delete_window: Atom,
+    wm_protocols: Atom,
+}
+
 pub struct WindowManager {
-    display: Display<UnixStream>,
-    root: Window<UnixStream>,
+    display: Display,
+    root: Window,
     monitors: Monitors,
     server: Server,
     config: Config,
+    atoms: Atoms,
     grab: Option<Grab>,
     should_close: bool,
 }
 
 impl WindowManager {
     pub fn new() -> Result<WindowManager, Box<dyn std::error::Error>> {
-        let display = display::open_unix(1)?;
+        let mut display = display::open(None)?;
         let root = display.default_root_window()?;
+
+        let atoms = Atoms {
+            wm_delete_window: display.intern_atom("WM_DELETE_WINDOW", false)?,
+            wm_protocols: display.intern_atom("WM_PROTOCOLS", false)?,
+        };
 
         Ok(WindowManager {
             display,
-            root: *root.try_clone()?,
+            root: root.clone(),
             monitors: Monitors::new(root),
             server: Server::new(),
             config: Config::default(),
+            atoms,
             grab: None,
             should_close: false,
         })
@@ -325,7 +336,7 @@ impl WindowManager {
 
         window.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
 
-        window.change_property(net_wm_name, utf8_string, PropFormat::Format8, PropMode::Replace, b"yaxwm")?;
+        window.change_property(net_wm_name, utf8_string, PropFormat::Format8, PropMode::Replace, b"yaxiwm")?;
 
         self.root.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
 
@@ -350,6 +361,13 @@ impl WindowManager {
 
             Ok(())
         })
+    }
+
+    // TODO: finish this, no question, DONT BE LAZY!
+    fn move_window_monitor(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let focus = self.display.get_input_focus()?;
+
+        Ok(())
     }
 
     fn mov_resize_focused<F>(&mut self, transform: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(u16, u16, u16, u16) -> (u16, u16, u16, u16) {
@@ -396,8 +414,6 @@ impl WindowManager {
 
     fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for sequence in self.server.incoming()? {
-            println!("sequence: {:?}", sequence);
-
             match sequence.request {
                 Request::Workspace => {
                     self.monitors.focused(|monitor| {
@@ -409,9 +425,19 @@ impl WindowManager {
                     })?;
                 },
                 Request::Kill => {
-                    self.focused_client(|client| client.window.kill())?;
+                    self.focused_client(|client| client.window.kill().map_err(|err| err.into()))?;
                 },
                 Request::Close => {
+                    let atoms = self.atoms.clone();
+
+                    self.focused_client(|client| {
+                        client.window.send_event(Event::ClientMessage {
+                            format: 32,
+                            window: client.window.id(),
+                            type_: atoms.wm_protocols,
+                            data: ClientMessageData::Long([atoms.wm_delete_window.id(), 0, 0, 0, 0]),
+                        }, vec![], false).map_err(|err| err.into())
+                    })?;
                 },
                 Request::FocusUp | Request::FocusDown | Request::FocusMaster => {
                     let focus = self.display.get_input_focus()?;
@@ -472,6 +498,10 @@ impl WindowManager {
 
                         Ok(())
                     })?;
+                },
+                Request::MonitorNext => {
+                },
+                Request::MonitorPrevious => {
                 },
                 Request::Unknown => {},
             }
