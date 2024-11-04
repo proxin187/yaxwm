@@ -11,16 +11,39 @@ use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder, PropForma
 use proto::Request;
 
 
+pub trait WindowState {
+    fn state(&mut self, atoms: Atoms) -> Result<State, Box<dyn std::error::Error>>;
+}
+
+impl WindowState for Window {
+    fn state(&mut self, atoms: Atoms) -> Result<State, Box<dyn std::error::Error>> {
+        if self.property_contains(atoms.window_type, &[atoms.type_dialog, atoms.type_splash, atoms.type_utility])? {
+            Ok(State::Float)
+        } else if self.property_contains(atoms.window_type, &[atoms.type_dock])? {
+            Ok(State::Dock)
+        } else {
+            Ok(State::Tiled)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    Tiled,
+    Float,
+    Dock,
+}
+
 pub struct Client {
     window: Window,
-    float: bool,
+    state: State,
 }
 
 impl Client {
-    pub fn new(window: Window, float: bool) -> Client {
+    pub fn new(window: Window, state: State) -> Client {
         Client {
             window,
-            float,
+            state,
         }
     }
 }
@@ -68,7 +91,7 @@ impl Workspaces {
 
     pub fn is_float(&self, wid: u32) -> bool {
         match self.find(wid) {
-            Some(index) => self.workspaces[self.current][index].float,
+            Some(index) => self.workspaces[self.current][index].state == State::Float,
             None => false,
         }
     }
@@ -92,24 +115,30 @@ impl Workspaces {
     }
 
     pub fn tile(&mut self, mut area: Area, gaps: u16) -> Result<(), Box<dyn std::error::Error>> {
-        for (w_idx, workspace) in self.workspaces.iter_mut().enumerate() {
-            if w_idx == self.current {
-                let floating = workspace.iter().map(|client| client.float).collect::<Vec<bool>>();
+        if let Some(workspace) = self.workspaces.get_mut(self.current) {
+            let ignored = workspace.iter().map(|client| client.state == State::Float || client.state == State::Dock).collect::<Vec<bool>>();
 
-                for (index, client) in workspace.iter_mut().enumerate() {
-                    if !client.float {
-                        let tiled_clients_left = floating[index + 1..].iter().filter(|float| !**float).count();
+            for (index, client) in workspace.iter_mut().enumerate() {
+                if client.state == State::Tiled {
+                    let tiled_clients_left = ignored[index + 1..].iter().filter(|ignore| !**ignore).count();
 
-                        let win = (tiled_clients_left > 0).then(|| area.split()).unwrap_or(area);
+                    let win = (tiled_clients_left > 0).then(|| area.split()).unwrap_or(area);
 
-                        client.window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
-                    }
+                    client.window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
+                }
 
+                if client.state != State::Dock {
                     client.window.map(WindowKind::Window)?;
                 }
-            } else {
+            }
+        }
+
+        for (w_idx, workspace) in self.workspaces.iter_mut().enumerate() {
+            if w_idx != self.current {
                 for client in workspace {
-                    client.window.unmap(WindowKind::Window)?;
+                    if client.state != State::Dock {
+                        client.window.unmap(WindowKind::Window)?;
+                    }
                 }
             }
         }
@@ -235,8 +264,13 @@ impl Grab {
 
 #[derive(Clone)]
 pub struct Atoms {
-    wm_delete_window: Atom,
-    wm_protocols: Atom,
+    delete_window: Atom,
+    protocols: Atom,
+    window_type: Atom,
+    type_dock: Atom,
+    type_dialog: Atom,
+    type_utility: Atom,
+    type_splash: Atom,
 }
 
 pub struct WindowManager {
@@ -252,12 +286,17 @@ pub struct WindowManager {
 
 impl WindowManager {
     pub fn new() -> Result<WindowManager, Box<dyn std::error::Error>> {
-        let mut display = display::open(None)?;
+        let mut display = display::open(Some(":2"))?;
         let root = display.default_root_window()?;
 
         let atoms = Atoms {
-            wm_delete_window: display.intern_atom("WM_DELETE_WINDOW", false)?,
-            wm_protocols: display.intern_atom("WM_PROTOCOLS", false)?,
+            delete_window: display.intern_atom("WM_DELETE_WINDOW", false)?,
+            protocols: display.intern_atom("WM_PROTOCOLS", false)?,
+            window_type: display.intern_atom("_NET_WM_WINDOW_TYPE", false)?,
+            type_dock: display.intern_atom("_NET_WM_WINDOW_TYPE_DOCK", false)?,
+            type_dialog: display.intern_atom("_NET_WM_WINDOW_TYPE_DIALOG", false)?,
+            type_utility: display.intern_atom("_NET_WM_WINDOW_TYPE_UTILITY", false)?,
+            type_splash: display.intern_atom("_NET_WM_WINDOW_TYPE_SPLASH", false)?,
         };
 
         Ok(WindowManager {
@@ -372,7 +411,7 @@ impl WindowManager {
 
     fn mov_resize_focused<F>(&mut self, transform: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(u16, u16, u16, u16) -> (u16, u16, u16, u16) {
         self.focused_client(|client| {
-            if client.float {
+            if client.state == State::Float {
                 let geometry = client.window.get_geometry()?;
 
                 let (x, y, width, height) = transform(geometry.x, geometry.y, geometry.width, geometry.height);
@@ -434,8 +473,8 @@ impl WindowManager {
                         client.window.send_event(Event::ClientMessage {
                             format: 32,
                             window: client.window.id(),
-                            type_: atoms.wm_protocols,
-                            data: ClientMessageData::Long([atoms.wm_delete_window.id(), 0, 0, 0, 0]),
+                            type_: atoms.protocols,
+                            data: ClientMessageData::Long([atoms.delete_window.id(), 0, 0, 0, 0]),
                         }, vec![], false).map_err(|err| err.into())
                     })?;
                 },
@@ -475,7 +514,11 @@ impl WindowManager {
                 },
                 Request::FloatToggle => {
                     self.focused_client(|client| {
-                        client.float = !client.float;
+                        if client.state == State::Float {
+                            client.state = State::Tiled;
+                        } else if client.state != State::Dock {
+                            client.state = State::Float;
+                        }
 
                         Ok(())
                     })?;
@@ -516,7 +559,12 @@ impl WindowManager {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
                 self.monitors.focused(|monitor| {
-                    monitor.workspace.insert(Client::new(self.display.window_from_id(window)?, false));
+                    let mut window = self.display.window_from_id(window)?;
+                    let state = window.state(self.atoms.clone())?;
+
+                    println!("state: {:?}", state);
+
+                    monitor.workspace.insert(Client::new(window, state));
 
                     Ok(())
                 })?;
@@ -527,9 +575,21 @@ impl WindowManager {
 
                 window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
+                // TODO: there is something wrong here
+                // looks like there is also something wrong with the event listener
+                // it doesnt recognize the Match error sometimes and instead gives Unknown error
+                //
+                // the match error seems to be a result of us sending the set_input_focus request
+
+                println!("set input focus");
+
                 window.set_input_focus(RevertTo::Parent)?;
 
+                println!("set input focus done");
+
                 self.set_focused_border(window.id())?;
+
+                println!("are we here?");
             },
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
@@ -554,6 +614,8 @@ impl WindowManager {
                 }
             },
             Event::FocusIn { window, .. } => {
+                log::write(format!("focus in: {}\n", window), Severity::Info)?;
+
                 self.set_focused_border(window)?;
             },
             Event::ButtonEvent { kind, coordinates, subwindow, button, .. } => match kind {
@@ -623,7 +685,7 @@ impl WindowManager {
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.setup()?;
 
-        // TODO: multi monitor support using xinerama
+        // TODO: there is a bug when running rmenu before opening any other applications
 
         log::write("yaxum is running\n", Severity::Info)?;
 
