@@ -11,11 +11,12 @@ use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder, PropForma
 use proto::Request;
 
 
-pub trait WindowState {
+/// trait for a few window addons
+pub trait WindowAddons {
     fn state(&mut self, atoms: Atoms) -> Result<State, Box<dyn std::error::Error>>;
 }
 
-impl WindowState for Window {
+impl WindowAddons for Window {
     fn state(&mut self, atoms: Atoms) -> Result<State, Box<dyn std::error::Error>> {
         if self.property_contains(atoms.window_type, &[atoms.type_dialog, atoms.type_splash, atoms.type_utility])? {
             Ok(State::Float)
@@ -286,7 +287,7 @@ pub struct WindowManager {
 
 impl WindowManager {
     pub fn new() -> Result<WindowManager, Box<dyn std::error::Error>> {
-        let mut display = display::open(Some(":2"))?;
+        let mut display = display::open(None)?;
         let root = display.default_root_window()?;
 
         let atoms = Atoms {
@@ -423,36 +424,40 @@ impl WindowManager {
         })
     }
 
-    fn set_focused_border(&mut self, focused: u32) -> Result<(), Box<dyn std::error::Error>> {
-        if focused != self.root.id() && focused != 1 && focused != 0 {
+    fn update_borders(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let focus = self.display.get_input_focus()?;
+
+        if focus.window != self.root.id() && focus.window > 1 {
+            let window = self.display.window_from_id(focus.window)?;
+
+            self.set_border(window)?;
+        }
+
+        Ok(())
+    }
+
+    fn set_border(&mut self, mut window: Window) -> Result<(), Box<dyn std::error::Error>> {
+        if window.state(self.atoms.clone())? != State::Dock {
             let borders = self.config.windows.borders;
 
             self.monitors.focused(|monitor| {
                 monitor.workspace.map_clients(|client| {
                     client.window.set_border_width(borders.width)?;
 
-                    client.window.set_border_pixel(borders.normal)?;
-
-                    Ok(())
-                })?;
-
-                Ok(())
+                    client.window.set_border_pixel(borders.normal).map_err(|err| err.into())
+                })
             })?;
 
-            self.display.window_from_id(focused)?.set_border_pixel(borders.focused)?;
+            window.set_border_pixel(borders.focused)?;
         }
 
         Ok(())
     }
 
-    fn update_borders(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let focus = self.display.get_input_focus()?;
-
-        self.set_focused_border(focus.window)
-    }
-
     fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for sequence in self.server.incoming()? {
+            println!("sequence: {:?}", sequence);
+
             match sequence.request {
                 Request::Workspace => {
                     self.monitors.focused(|monitor| {
@@ -562,8 +567,6 @@ impl WindowManager {
                     let mut window = self.display.window_from_id(window)?;
                     let state = window.state(self.atoms.clone())?;
 
-                    println!("state: {:?}", state);
-
                     monitor.workspace.insert(Client::new(window, state));
 
                     Ok(())
@@ -575,21 +578,11 @@ impl WindowManager {
 
                 window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
-                // TODO: there is something wrong here
-                // looks like there is also something wrong with the event listener
-                // it doesnt recognize the Match error sometimes and instead gives Unknown error
-                //
-                // the match error seems to be a result of us sending the set_input_focus request
+                if window.state(self.atoms.clone())? != State::Dock {
+                    window.set_input_focus(RevertTo::Parent)?;
 
-                println!("set input focus");
-
-                window.set_input_focus(RevertTo::Parent)?;
-
-                println!("set input focus done");
-
-                self.set_focused_border(window.id())?;
-
-                println!("are we here?");
+                    self.set_border(window)?;
+                }
             },
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
@@ -609,14 +602,26 @@ impl WindowManager {
             Event::EnterNotify { window, .. } => {
                 log::write(format!("enter notify: {}\n", window), Severity::Info)?;
 
-                if window != self.root.id() {
-                    self.display.window_from_id(window)?.set_input_focus(RevertTo::Parent)?;
+                if window != self.root.id() && window > 1 {
+                    let mut window = self.display.window_from_id(window)?;
+
+                    window.set_input_focus(RevertTo::Parent)?;
                 }
             },
             Event::FocusIn { window, .. } => {
                 log::write(format!("focus in: {}\n", window), Severity::Info)?;
 
-                self.set_focused_border(window)?;
+                if window != self.root.id() && window > 1 {
+                    println!("here?");
+
+                    let window = self.display.window_from_id(window)?;
+
+                    println!("HUH??");
+
+                    self.set_border(window)?;
+
+                    println!("WUUUUUUUTTTHHHH???");
+                }
             },
             Event::ButtonEvent { kind, coordinates, subwindow, button, .. } => match kind {
                 EventKind::Press => {
@@ -648,6 +653,8 @@ impl WindowManager {
                 },
             },
             Event::MotionNotify { coordinates, .. } => {
+                log::write(format!("motion notify: {:?}\n", coordinates), Severity::Info)?;
+
                 if let Some(grab) = &mut self.grab {
                     let x_diff = coordinates.root_x as i16 - grab.x as i16;
                     let y_diff = coordinates.root_y as i16 - grab.y as i16;
@@ -663,18 +670,14 @@ impl WindowManager {
                     }
                 }
             },
-            Event::ConfigureRequest { window, .. } => {
-                // TODO: looks like there is something wrong with configure request,
-                //
-                // maybe xterm waits for a configure notify after it sends the configure request?
+            Event::ConfigureRequest { window, values } => {
+                log::write(format!("configure request: {}, values: {:?}\n", window, values), Severity::Info)?;
 
-                log::write(format!("configure request: {}\n", window), Severity::Info)?;
-
-                /*
                 let mut window = self.display.window_from_id(window)?;
 
-                window.configure();
-                */
+                if window.state(self.atoms.clone())? == State::Dock {
+                    window.configure(ValuesBuilder::new(values))?;
+                }
             },
             _ => {},
         }
@@ -690,11 +693,23 @@ impl WindowManager {
         log::write("yaxum is running\n", Severity::Info)?;
 
         while !self.should_close {
+            println!("here?");
+
+            // TODO: this returns an error, its from a invalid window error on a configure window
+            // request
+            let poll = self.display.poll_event()?;
+
+            println!("poll event: {:?}", poll);
+
             if self.display.poll_event()? {
                 self.handle_event()?;
             }
 
+            println!("before");
+
             self.handle_incoming()?;
+
+            println!("incoming");
         }
 
         Ok(())
