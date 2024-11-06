@@ -117,28 +117,32 @@ impl Workspaces {
 
     pub fn tile(&mut self, mut area: Area, gaps: u16) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(workspace) = self.workspaces.get_mut(self.current) {
-            let ignored = workspace.iter().map(|client| client.state == State::Float || client.state == State::Dock).collect::<Vec<bool>>();
+            let ignored = workspace.iter().map(|client| client.state != State::Tiled).collect::<Vec<bool>>();
 
             for (index, client) in workspace.iter_mut().enumerate() {
-                if client.state == State::Tiled {
-                    let tiled_clients_left = ignored[index + 1..].iter().filter(|ignore| !**ignore).count();
+                match client.state {
+                    State::Tiled => {
+                        let tiled_clients_left = ignored[index + 1..].iter().filter(|ignore| !**ignore).count();
 
-                    let win = (tiled_clients_left > 0).then(|| area.split()).unwrap_or(area);
+                        let win = (tiled_clients_left > 0).then(|| area.split()).unwrap_or(area);
 
-                    client.window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
+                        client.window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
+                    },
+                    _ => {},
                 }
 
-                if client.state != State::Dock {
-                    client.window.map(WindowKind::Window)?;
-                }
+                client.window.map(WindowKind::Window)?;
             }
         }
 
         for (w_idx, workspace) in self.workspaces.iter_mut().enumerate() {
             if w_idx != self.current {
                 for client in workspace {
-                    if client.state != State::Dock {
-                        client.window.unmap(WindowKind::Window)?;
+                    match client.state {
+                        State::Tiled | State::Float => {
+                            client.window.unmap(WindowKind::Window)?;
+                        },
+                        _ => {},
                     }
                 }
             }
@@ -287,7 +291,7 @@ pub struct WindowManager {
 
 impl WindowManager {
     pub fn new() -> Result<WindowManager, Box<dyn std::error::Error>> {
-        let mut display = display::open(None)?;
+        let mut display = display::open(Some(":2"))?;
         let root = display.default_root_window()?;
 
         let atoms = Atoms {
@@ -428,15 +432,15 @@ impl WindowManager {
         let focus = self.display.get_input_focus()?;
 
         if focus.window != self.root.id() && focus.window > 1 {
-            let window = self.display.window_from_id(focus.window)?;
+            let mut window = self.display.window_from_id(focus.window)?;
 
-            self.set_border(window)?;
+            self.set_border(&mut window)?;
         }
 
         Ok(())
     }
 
-    fn set_border(&mut self, mut window: Window) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_border(&mut self, window: &mut Window) -> Result<(), Box<dyn std::error::Error>> {
         if window.state(self.atoms.clone())? != State::Dock {
             let borders = self.config.windows.borders;
 
@@ -563,35 +567,44 @@ impl WindowManager {
             Event::MapRequest { window, .. } => {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
-                self.monitors.focused(|monitor| {
-                    let mut window = self.display.window_from_id(window)?;
-                    let state = window.state(self.atoms.clone())?;
-
-                    monitor.workspace.insert(Client::new(window, state));
-
-                    Ok(())
-                })?;
-
-                self.tile()?;
-
                 let mut window = self.display.window_from_id(window)?;
+                let state = window.state(self.atoms.clone())?;
 
                 window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
-                if window.state(self.atoms.clone())? != State::Dock {
-                    window.set_input_focus(RevertTo::Parent)?;
+                window.map(WindowKind::Window)?;
 
-                    self.set_border(window)?;
+                match state {
+                    State::Tiled | State::Float => {
+                        window.set_input_focus(RevertTo::Parent)?;
+
+                        self.set_border(&mut window)?;
+
+                        self.monitors.focused(move |monitor| {
+                            monitor.workspace.insert(Client::new(window.clone(), state));
+
+                            Ok(())
+                        })?;
+
+                        self.tile()?;
+                    },
+                    _ => {},
                 }
             },
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
 
+                // TODO: maybe we should refactor the dock handling before finding the error
+                // source?
+
                 self.monitors.all(|monitor| {
                     if let Some(index) = monitor.workspace.find(window) {
+                        println!("removing: {}", index);
+
                         monitor.workspace.remove(index);
 
-                        monitor.workspace.change_focus(window, |index| index - 1)?;
+                        // TODO: i suspect the problem might be here
+                        // monitor.workspace.change_focus(window, |index| index - 1)?;
                     }
 
                     Ok(())
@@ -605,22 +618,28 @@ impl WindowManager {
                 if window != self.root.id() && window > 1 {
                     let mut window = self.display.window_from_id(window)?;
 
-                    window.set_input_focus(RevertTo::Parent)?;
+                    match window.state(self.atoms.clone())? {
+                        State::Tiled | State::Float => {
+                            window.set_input_focus(RevertTo::Parent)?;
+                        },
+                        _ => {},
+                    }
                 }
             },
             Event::FocusIn { window, .. } => {
                 log::write(format!("focus in: {}\n", window), Severity::Info)?;
 
+                // TODO: looks like it goes here last before getting the error
+
                 if window != self.root.id() && window > 1 {
-                    println!("here?");
+                    let mut window = self.display.window_from_id(window)?;
 
-                    let window = self.display.window_from_id(window)?;
-
-                    println!("HUH??");
-
-                    self.set_border(window)?;
-
-                    println!("WUUUUUUUTTTHHHH???");
+                    match window.state(self.atoms.clone())? {
+                        State::Tiled | State::Float => {
+                            self.set_border(&mut window)?;
+                        },
+                        _ => {},
+                    }
                 }
             },
             Event::ButtonEvent { kind, coordinates, subwindow, button, .. } => match kind {
@@ -693,23 +712,14 @@ impl WindowManager {
         log::write("yaxum is running\n", Severity::Info)?;
 
         while !self.should_close {
-            println!("here?");
-
-            // TODO: this returns an error, its from a invalid window error on a configure window
-            // request
-            let poll = self.display.poll_event()?;
-
-            println!("poll event: {:?}", poll);
+            // TODO: THE ERROR ORIGINATES FROM POLL_EVENT, MEANING POLL_EVENT RETURNS IT
+            // the error is most likely caused from something inside handle_incoming
 
             if self.display.poll_event()? {
                 self.handle_event()?;
             }
 
-            println!("before");
-
             self.handle_incoming()?;
-
-            println!("incoming");
         }
 
         Ok(())
