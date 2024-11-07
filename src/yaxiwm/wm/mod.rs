@@ -567,6 +567,9 @@ impl WindowManager {
             Event::MapRequest { window, .. } => {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
+                // TODO: MAYBE THE WINDOW IS INSERTED TWICE SINCE WE STILL TRY TO MAP IT AFTER ITS
+                // UNMAPPED?
+
                 let mut window = self.display.window_from_id(window)?;
                 let state = window.state(self.atoms.clone())?;
 
@@ -581,6 +584,7 @@ impl WindowManager {
                         self.set_border(&mut window)?;
 
                         self.monitors.focused(move |monitor| {
+                            // TODO: we need to only insert the window if it doesnt exist
                             monitor.workspace.insert(Client::new(window.clone(), state));
 
                             Ok(())
