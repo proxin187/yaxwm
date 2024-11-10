@@ -6,33 +6,29 @@ use crate::startup;
 use yaxi::display::request::GetGeometryResponse;
 use yaxi::display::{self, Display, Atom};
 use yaxi::proto::{Event, EventMask, EventKind, KeyMask, Button, Cursor, RevertTo, WindowClass, PointerMode, KeyboardMode, ClientMessageData};
-use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder, PropFormat, PropMode};
+use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder};
+use yaxi::ewmh::EwmhWindowType;
 
 use proto::Request;
 
-
-/// trait for a few window addons
-pub trait WindowAddons {
-    fn state(&mut self, atoms: Atoms) -> Result<State, Box<dyn std::error::Error>>;
-}
-
-impl WindowAddons for Window {
-    fn state(&mut self, atoms: Atoms) -> Result<State, Box<dyn std::error::Error>> {
-        if self.property_contains(atoms.window_type, &[atoms.type_dialog, atoms.type_splash, atoms.type_utility])? {
-            Ok(State::Float)
-        } else if self.property_contains(atoms.window_type, &[atoms.type_dock])? {
-            Ok(State::Dock)
-        } else {
-            Ok(State::Tiled)
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Tiled,
     Float,
     Dock,
+}
+
+impl From<&[EwmhWindowType]> for State {
+    fn from(type_: &[EwmhWindowType]) -> State {
+        if type_.contains(&EwmhWindowType::Dock) {
+            State::Dock
+        } else if type_.contains(&EwmhWindowType::Splash) || type_.contains(&EwmhWindowType::Utility) || type_.contains(&EwmhWindowType::Dialog) {
+            State::Float
+        } else {
+            State::Tiled
+        }
+    }
 }
 
 pub struct Client {
@@ -267,15 +263,10 @@ impl Grab {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Atoms {
-    delete_window: Atom,
-    protocols: Atom,
-    window_type: Atom,
-    type_dock: Atom,
-    type_dialog: Atom,
-    type_utility: Atom,
-    type_splash: Atom,
+    wm_delete: Atom,
+    wm_protocols: Atom,
 }
 
 pub struct WindowManager {
@@ -291,17 +282,12 @@ pub struct WindowManager {
 
 impl WindowManager {
     pub fn new() -> Result<WindowManager, Box<dyn std::error::Error>> {
-        let mut display = display::open(Some(":2"))?;
+        let display = display::open(Some(":2"))?;
         let root = display.default_root_window()?;
 
         let atoms = Atoms {
-            delete_window: display.intern_atom("WM_DELETE_WINDOW", false)?,
-            protocols: display.intern_atom("WM_PROTOCOLS", false)?,
-            window_type: display.intern_atom("_NET_WM_WINDOW_TYPE", false)?,
-            type_dock: display.intern_atom("_NET_WM_WINDOW_TYPE_DOCK", false)?,
-            type_dialog: display.intern_atom("_NET_WM_WINDOW_TYPE_DIALOG", false)?,
-            type_utility: display.intern_atom("_NET_WM_WINDOW_TYPE_UTILITY", false)?,
-            type_splash: display.intern_atom("_NET_WM_WINDOW_TYPE_SPLASH", false)?,
+            wm_delete: display.intern_atom("WM_DELETE_WINDOW", false)?,
+            wm_protocols: display.intern_atom("WM_PROTOCOLS", false)?,
         };
 
         Ok(WindowManager {
@@ -349,7 +335,7 @@ impl WindowManager {
     }
 
     fn load_monitors(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut xinerama = self.display.query_xinerama()?;
+        let xinerama = self.display.query_xinerama()?;
 
         for screen in xinerama.query_screens()? {
             self.monitors.append(Monitor {
@@ -362,11 +348,21 @@ impl WindowManager {
     }
 
     fn set_supporting_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        /*
         let net_wm_check = self.display.intern_atom("_NET_SUPPORTING_WM_CHECK", false)?;
         let net_wm_name = self.display.intern_atom("_NET_WM_NAME", false)?;
         let utf8_string = self.display.intern_atom("UTF8_STRING", false)?;
+        */
 
-        let mut window = self.root.create_window(WindowArguments {
+        /*
+        window.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
+
+        window.change_property(net_wm_name, utf8_string, PropFormat::Format8, PropMode::Replace, b"yaxiwm")?;
+
+        self.root.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
+        */
+
+        let window = self.root.create_window(WindowArguments {
             depth: self.root.depth(),
             x: 0,
             y: 0,
@@ -378,11 +374,11 @@ impl WindowManager {
             values: ValuesBuilder::new(vec![]),
         })?;
 
-        window.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
+        window.ewmh_set_supporting_wm_check(window.id())?;
 
-        window.change_property(net_wm_name, utf8_string, PropFormat::Format8, PropMode::Replace, b"yaxiwm")?;
+        window.ewmh_set_wm_name("yaxi")?;
 
-        self.root.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
+        self.root.ewmh_set_supporting_wm_check(window.id())?;
 
         Ok(())
     }
@@ -407,12 +403,14 @@ impl WindowManager {
         })
     }
 
+    /*
     // TODO: finish this, no question, DONT BE LAZY!
     fn move_window_monitor(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let focus = self.display.get_input_focus()?;
 
         Ok(())
     }
+    */
 
     fn mov_resize_focused<F>(&mut self, transform: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(u16, u16, u16, u16) -> (u16, u16, u16, u16) {
         self.focused_client(|client| {
@@ -432,16 +430,16 @@ impl WindowManager {
         let focus = self.display.get_input_focus()?;
 
         if focus.window != self.root.id() && focus.window > 1 {
-            let mut window = self.display.window_from_id(focus.window)?;
+            let window = self.display.window_from_id(focus.window)?;
 
-            self.set_border(&mut window)?;
+            self.set_border(&window)?;
         }
 
         Ok(())
     }
 
-    fn set_border(&mut self, window: &mut Window) -> Result<(), Box<dyn std::error::Error>> {
-        if window.state(self.atoms.clone())? != State::Dock {
+    fn set_border(&mut self, window: &Window) -> Result<(), Box<dyn std::error::Error>> {
+        if !window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
             let borders = self.config.windows.borders;
 
             self.monitors.focused(|monitor| {
@@ -482,8 +480,8 @@ impl WindowManager {
                         client.window.send_event(Event::ClientMessage {
                             format: 32,
                             window: client.window.id(),
-                            type_: atoms.protocols,
-                            data: ClientMessageData::Long([atoms.delete_window.id(), 0, 0, 0, 0]),
+                            type_: atoms.wm_protocols,
+                            data: ClientMessageData::Long([atoms.wm_delete.id(), 0, 0, 0, 0]),
                         }, vec![], false).map_err(|err| err.into())
                     })?;
                 },
@@ -567,39 +565,34 @@ impl WindowManager {
             Event::MapRequest { window, .. } => {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
-                // TODO: MAYBE THE WINDOW IS INSERTED TWICE SINCE WE STILL TRY TO MAP IT AFTER ITS
-                // UNMAPPED?
-
-                let mut window = self.display.window_from_id(window)?;
-                let state = window.state(self.atoms.clone())?;
+                let window = self.display.window_from_id(window)?;
+                let type_ = window.ewmh_get_wm_window_type()?;
 
                 window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
                 window.map(WindowKind::Window)?;
 
-                match state {
-                    State::Tiled | State::Float => {
-                        window.set_input_focus(RevertTo::Parent)?;
+                // TODO: this fails when we launch rmenu, its a error within
+                // ewmh_get_wm_window_type, specificaly the get_property reads wrong length
 
-                        self.set_border(&mut window)?;
+                if !type_.contains(&EwmhWindowType::Dock) {
+                    window.set_input_focus(RevertTo::Parent)?;
 
-                        self.monitors.focused(move |monitor| {
-                            // TODO: we need to only insert the window if it doesnt exist
-                            monitor.workspace.insert(Client::new(window.clone(), state));
+                    self.set_border(&window)?;
 
-                            Ok(())
-                        })?;
+                    self.monitors.focused(move |monitor| {
+                        if monitor.workspace.find(window.id()).is_none() {
+                            monitor.workspace.insert(Client::new(window.clone(), State::from(type_.as_slice())));
+                        }
 
-                        self.tile()?;
-                    },
-                    _ => {},
+                        Ok(())
+                    })?;
+
+                    self.tile()?;
                 }
             },
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
-
-                // TODO: maybe we should refactor the dock handling before finding the error
-                // source?
 
                 self.monitors.all(|monitor| {
                     if let Some(index) = monitor.workspace.find(window) {
@@ -607,7 +600,7 @@ impl WindowManager {
 
                         monitor.workspace.remove(index);
 
-                        // TODO: i suspect the problem might be here
+                        // TODO: maybe we dont need to automatically change focus
                         // monitor.workspace.change_focus(window, |index| index - 1)?;
                     }
 
@@ -620,36 +613,28 @@ impl WindowManager {
                 log::write(format!("enter notify: {}\n", window), Severity::Info)?;
 
                 if window != self.root.id() && window > 1 {
-                    let mut window = self.display.window_from_id(window)?;
+                    let window = self.display.window_from_id(window)?;
 
-                    match window.state(self.atoms.clone())? {
-                        State::Tiled | State::Float => {
-                            window.set_input_focus(RevertTo::Parent)?;
-                        },
-                        _ => {},
+                    if !window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
+                        window.set_input_focus(RevertTo::Parent)?;
                     }
                 }
             },
             Event::FocusIn { window, .. } => {
                 log::write(format!("focus in: {}\n", window), Severity::Info)?;
 
-                // TODO: looks like it goes here last before getting the error
-
                 if window != self.root.id() && window > 1 {
-                    let mut window = self.display.window_from_id(window)?;
+                    let window = self.display.window_from_id(window)?;
 
-                    match window.state(self.atoms.clone())? {
-                        State::Tiled | State::Float => {
-                            self.set_border(&mut window)?;
-                        },
-                        _ => {},
+                    if !window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
+                        self.set_border(&window)?;
                     }
                 }
             },
             Event::ButtonEvent { kind, coordinates, subwindow, button, .. } => match kind {
                 EventKind::Press => {
                     if !self.monitors.is_tiled(subwindow) && self.config.windows.mouse_movement {
-                        let mut window = self.display.window_from_id(subwindow)?;
+                        let window = self.display.window_from_id(subwindow)?;
 
                         window.raise()?;
 
@@ -696,9 +681,9 @@ impl WindowManager {
             Event::ConfigureRequest { window, values } => {
                 log::write(format!("configure request: {}, values: {:?}\n", window, values), Severity::Info)?;
 
-                let mut window = self.display.window_from_id(window)?;
+                let window = self.display.window_from_id(window)?;
 
-                if window.state(self.atoms.clone())? == State::Dock {
+                if window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
                     window.configure(ValuesBuilder::new(values))?;
                 }
             },
