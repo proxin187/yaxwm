@@ -225,7 +225,13 @@ impl Monitors {
     pub fn focused<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>> {
         let pointer = self.root.query_pointer()?;
 
+        // TODO: this function doesnt find the focused monitor correctly
+
+        println!("pointer: {:?}", pointer);
+
         for monitor in &mut self.monitors {
+            println!("area: {:?}", monitor.area);
+
             if monitor.area.contains(pointer.root_x, pointer.root_y) {
                 f(monitor)?;
             }
@@ -282,7 +288,7 @@ pub struct WindowManager {
 
 impl WindowManager {
     pub fn new() -> Result<WindowManager, Box<dyn std::error::Error>> {
-        let display = display::open(Some(":2"))?;
+        let display = display::open(None)?;
         let root = display.default_root_window()?;
 
         let atoms = Atoms {
@@ -348,20 +354,6 @@ impl WindowManager {
     }
 
     fn set_supporting_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        /*
-        let net_wm_check = self.display.intern_atom("_NET_SUPPORTING_WM_CHECK", false)?;
-        let net_wm_name = self.display.intern_atom("_NET_WM_NAME", false)?;
-        let utf8_string = self.display.intern_atom("UTF8_STRING", false)?;
-        */
-
-        /*
-        window.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
-
-        window.change_property(net_wm_name, utf8_string, PropFormat::Format8, PropMode::Replace, b"yaxiwm")?;
-
-        self.root.change_property(net_wm_check, Atom::WINDOW, PropFormat::Format32, PropMode::Replace, &window.id().to_le_bytes())?;
-        */
-
         let window = self.root.create_window(WindowArguments {
             depth: self.root.depth(),
             x: 0,
@@ -465,6 +457,8 @@ impl WindowManager {
                     self.monitors.focused(|monitor| {
                         if sequence.value.max(1) - 1 < monitor.workspace.len() as u32 {
                             monitor.workspace.current = sequence.value.max(1) as usize - 1;
+
+                            self.root.ewmh_set_current_desktop(monitor.workspace.current as u32)?;
                         }
 
                         monitor.workspace.tile(monitor.area.pad(self.config.padding), self.config.windows.gaps)
@@ -548,6 +542,8 @@ impl WindowManager {
 
                         Ok(())
                     })?;
+
+                    self.root.ewmh_set_number_of_desktops(sequence.value)?;
                 },
                 Request::MonitorNext => {
                 },
@@ -571,9 +567,6 @@ impl WindowManager {
                 window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
 
                 window.map(WindowKind::Window)?;
-
-                // TODO: this fails when we launch rmenu, its a error within
-                // ewmh_get_wm_window_type, specificaly the get_property reads wrong length
 
                 if !type_.contains(&EwmhWindowType::Dock) {
                     window.set_input_focus(RevertTo::Parent)?;
@@ -696,14 +689,13 @@ impl WindowManager {
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.setup()?;
 
-        // TODO: there is a bug when running rmenu before opening any other applications
-
         log::write("yaxum is running\n", Severity::Info)?;
 
-        while !self.should_close {
-            // TODO: THE ERROR ORIGINATES FROM POLL_EVENT, MEANING POLL_EVENT RETURNS IT
-            // the error is most likely caused from something inside handle_incoming
+        // TODO: the bspwm config runs this to start the bar
+        //
+        // ~/.config/polybar/launch.sh &
 
+        while !self.should_close {
             if self.display.poll_event()? {
                 self.handle_event()?;
             }
