@@ -1,13 +1,15 @@
+use std::fs::File;
 use std::io::{self, Write};
 use std::sync::Mutex;
-use std::fs::File;
 
 static OUTPUTS: Mutex<Vec<Output>> = Mutex::new(Vec::new());
 
 macro_rules! lock {
     ($mutex:expr) => {
-        $mutex.lock().map_err(|err| Into::<Box<dyn std::error::Error>>::into(err))
-    }
+        $mutex
+            .lock()
+            .map_err(|err| Into::<Box<dyn std::error::Error>>::into(err))
+    };
 }
 
 pub struct Output {
@@ -28,7 +30,8 @@ impl Output {
     }
 
     pub fn write(&mut self, string: String) -> Result<(), Box<dyn std::error::Error>> {
-        self.inner.write(string.as_bytes())
+        self.inner
+            .write(string.as_bytes())
             .map(|_| ())
             .map_err(|err| err.into())
     }
@@ -62,7 +65,10 @@ impl Severity {
     }
 }
 
-pub fn write(message: impl std::fmt::Display, severity: Severity) -> Result<(), Box<dyn std::error::Error>> {
+pub fn write(
+    message: impl std::fmt::Display,
+    severity: Severity,
+) -> Result<(), Box<dyn std::error::Error>> {
     severity.write(message)
 }
 
@@ -73,5 +79,3 @@ pub fn init(outputs: Vec<Output>) -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-

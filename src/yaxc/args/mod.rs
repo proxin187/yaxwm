@@ -1,9 +1,8 @@
 use crate::error::Error;
 
 use std::collections::HashMap;
-use std::iter::{Peekable, Skip};
 use std::env;
-
+use std::iter::{Peekable, Skip};
 
 #[derive(Clone, Copy)]
 pub enum Rule<T: Clone + Copy> {
@@ -14,17 +13,9 @@ pub enum Rule<T: Clone + Copy> {
 
 #[derive(Debug)]
 pub enum Argument<T: std::fmt::Debug> {
-    Flag {
-        kind: T,
-    },
-    Integer {
-        kind: T,
-        value: u32,
-    },
-    Hex {
-        kind: T,
-        value: u32,
-    },
+    Flag { kind: T },
+    Integer { kind: T, value: u32 },
+    Hex { kind: T, value: u32 },
 }
 
 pub struct Args<T: Clone + Copy + std::fmt::Debug> {
@@ -32,7 +23,10 @@ pub struct Args<T: Clone + Copy + std::fmt::Debug> {
     args: Peekable<Skip<env::Args>>,
 }
 
-impl<T> Args<T> where T: Clone + Copy + std::fmt::Debug {
+impl<T> Args<T>
+where
+    T: Clone + Copy + std::fmt::Debug,
+{
     pub fn new() -> Args<T> {
         Args {
             rules: HashMap::new(),
@@ -63,7 +57,8 @@ impl<T> Args<T> where T: Clone + Copy + std::fmt::Debug {
     }
 
     fn parse_next(&mut self) -> Result<String, Box<dyn std::error::Error>> {
-        self.args.next()
+        self.args
+            .next()
             .ok_or(Box::new(Error::ArgsEmpty))
             .map_err(|err| err.into())
     }
@@ -71,18 +66,18 @@ impl<T> Args<T> where T: Clone + Copy + std::fmt::Debug {
     fn parse(&mut self, arg: String) -> Result<Argument<T>, Box<dyn std::error::Error>> {
         let rules = self.rules.clone();
 
-        rules.get(&arg)
-           .ok_or(Error::Unknown { arg })
-           .map_err(|err| err.into())
-           .and_then(|rule| self.parse_rule(*rule))
+        rules
+            .get(&arg)
+            .ok_or(Error::Unknown { arg })
+            .map_err(|err| err.into())
+            .and_then(|rule| self.parse_rule(*rule))
     }
 
     pub fn next(&mut self) -> Result<Argument<T>, Box<dyn std::error::Error>> {
-        self.args.next()
+        self.args
+            .next()
             .ok_or(Error::ArgsEmpty)
             .map_err(|err| err.into())
             .and_then(|arg| self.parse(arg))
     }
 }
-
-

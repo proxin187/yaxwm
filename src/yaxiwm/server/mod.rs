@@ -1,19 +1,20 @@
 use crate::log::{self, Severity};
 
+use std::env;
+use std::fs;
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::env;
-use std::fs;
 
-use proto::{Stream, Sequence};
+use proto::{Sequence, Stream};
 
 macro_rules! lock {
     ($mutex:expr) => {
-        $mutex.lock().map_err(|_| Into::<Box<dyn std::error::Error>>::into("failed to lock"))
-    }
+        $mutex
+            .lock()
+            .map_err(|_| Into::<Box<dyn std::error::Error>>::into("failed to lock"))
+    };
 }
-
 
 pub struct Server {
     incoming: Arc<Mutex<Vec<Sequence>>>,
@@ -35,10 +36,11 @@ impl Server {
 
         thread::spawn(move || {
             match Listener::new(incoming).and_then(|mut listener| listener.listen()) {
-                Ok(()) => {},
+                Ok(()) => {}
                 Err(err) => {
-                    log::write(format!("listener failed: {}\n", err), Severity::Error).expect("failed to log");
-                },
+                    log::write(format!("listener failed: {}\n", err), Severity::Error)
+                        .expect("failed to log");
+                }
             }
         });
 
@@ -52,7 +54,9 @@ pub struct Listener {
 }
 
 impl Listener {
-    pub fn new(incoming: Arc<Mutex<Vec<Sequence>>>) -> Result<Listener, Box<dyn std::error::Error>> {
+    pub fn new(
+        incoming: Arc<Mutex<Vec<Sequence>>>,
+    ) -> Result<Listener, Box<dyn std::error::Error>> {
         let home = env::var("HOME")?;
         let path = format!("{home}/.config/yaxiwm/ipc");
 
@@ -67,7 +71,9 @@ impl Listener {
     }
 
     fn handle(&self, mut stream: Stream) -> Result<(), Box<dyn std::error::Error>> {
-        let actions = stream.read()?.chunks(5)
+        let actions = stream
+            .read()?
+            .chunks(5)
             .filter(|chunk| chunk.len() == 5)
             .map(|chunk| Sequence::decode(chunk))
             .collect::<Vec<Sequence>>();
@@ -87,5 +93,3 @@ impl Listener {
         Ok(())
     }
 }
-
-

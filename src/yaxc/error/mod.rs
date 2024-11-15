@@ -1,12 +1,8 @@
-
-
 #[derive(Debug)]
 pub enum Error {
     Expected,
     ArgsEmpty,
-    Unknown {
-        arg: String,
-    },
+    Unknown { arg: String },
 }
 
 impl std::fmt::Display for Error {
@@ -20,5 +16,3 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
-
-

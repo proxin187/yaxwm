@@ -1,5 +1,3 @@
-
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Padding {
     pub top: u16,
@@ -27,5 +25,3 @@ pub struct Config {
     pub padding: Padding,
     pub windows: Windows,
 }
-
-

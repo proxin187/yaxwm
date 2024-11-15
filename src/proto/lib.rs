@@ -1,10 +1,9 @@
-use std::os::unix::net::UnixStream;
-use std::io::{Read, Write};
-use std::slice;
 use std::env;
-use std::ptr;
+use std::io::{Read, Write};
 use std::mem;
-
+use std::os::unix::net::UnixStream;
+use std::ptr;
+use std::slice;
 
 #[repr(packed, C)]
 #[derive(Debug, Clone, Copy)]
@@ -15,10 +14,7 @@ pub struct Sequence {
 
 impl Sequence {
     pub fn new(request: Request, value: u32) -> Sequence {
-        Sequence {
-            request,
-            value,
-        }
+        Sequence { request, value }
     }
 
     pub fn decode<'a>(bytes: &'a [u8]) -> Sequence {
@@ -31,7 +27,11 @@ impl Sequence {
 
     pub fn encode(&self) -> Vec<u8> {
         unsafe {
-            slice::from_raw_parts((self as *const Sequence) as *const u8, mem::size_of::<Sequence>()).to_vec()
+            slice::from_raw_parts(
+                (self as *const Sequence) as *const u8,
+                mem::size_of::<Sequence>(),
+            )
+            .to_vec()
         }
     }
 }
@@ -76,9 +76,7 @@ pub struct Stream {
 
 impl From<UnixStream> for Stream {
     fn from(stream: UnixStream) -> Stream {
-        Stream {
-            stream,
-        }
+        Stream { stream }
     }
 }
 
@@ -94,17 +92,15 @@ impl Stream {
     pub fn send(&mut self, sequence: Sequence) -> Result<(), Box<dyn std::error::Error>> {
         let bytes = sequence.encode();
 
-        self.stream.write_all(&bytes)
-            .map_err(|err| err.into())
+        self.stream.write_all(&bytes).map_err(|err| err.into())
     }
 
     pub fn read(&mut self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut buffer: Vec<u8> = Vec::new();
 
-        self.stream.read_to_end(&mut buffer)
+        self.stream
+            .read_to_end(&mut buffer)
             .map_err(|err| err.into())
             .map(|_| buffer)
     }
 }
-
-

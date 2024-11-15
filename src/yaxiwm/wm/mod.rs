@@ -4,13 +4,15 @@ use crate::server::Server;
 use crate::startup;
 
 use yaxi::display::request::GetGeometryResponse;
-use yaxi::display::{self, Display, Atom};
-use yaxi::proto::{Event, EventMask, EventKind, KeyMask, Button, Cursor, RevertTo, WindowClass, PointerMode, KeyboardMode, ClientMessageData};
-use yaxi::window::{Window, WindowKind, WindowArguments, ValuesBuilder};
+use yaxi::display::{self, Atom, Display};
 use yaxi::ewmh::EwmhWindowType;
+use yaxi::proto::{
+    Button, ClientMessageData, Cursor, Event, EventKind, EventMask, KeyMask, KeyboardMode,
+    PointerMode, RevertTo, WindowClass,
+};
+use yaxi::window::{ValuesBuilder, Window, WindowArguments, WindowKind};
 
 use proto::Request;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -23,7 +25,10 @@ impl From<&[EwmhWindowType]> for State {
     fn from(type_: &[EwmhWindowType]) -> State {
         if type_.contains(&EwmhWindowType::Dock) {
             State::Dock
-        } else if type_.contains(&EwmhWindowType::Splash) || type_.contains(&EwmhWindowType::Utility) || type_.contains(&EwmhWindowType::Dialog) {
+        } else if type_.contains(&EwmhWindowType::Splash)
+            || type_.contains(&EwmhWindowType::Utility)
+            || type_.contains(&EwmhWindowType::Dialog)
+        {
             State::Float
         } else {
             State::Tiled
@@ -38,10 +43,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(window: Window, state: State) -> Client {
-        Client {
-            window,
-            state,
-        }
+        Client { window, state }
     }
 }
 
@@ -62,7 +64,11 @@ impl Workspaces {
         if size >= self.len() {
             self.workspaces.resize_with(size, Vec::new);
         } else if size > 0 {
-            let excess = self.workspaces.drain(size..self.len()).flatten().collect::<Vec<Client>>();
+            let excess = self
+                .workspaces
+                .drain(size..self.len())
+                .flatten()
+                .collect::<Vec<Client>>();
 
             self.workspaces[size - 1].extend(excess);
 
@@ -83,7 +89,9 @@ impl Workspaces {
     }
 
     pub fn find(&self, wid: u32) -> Option<usize> {
-        self.workspaces[self.current].iter().position(|client| client.window.id() == wid)
+        self.workspaces[self.current]
+            .iter()
+            .position(|client| client.window.id() == wid)
     }
 
     pub fn is_float(&self, wid: u32) -> bool {
@@ -93,15 +101,24 @@ impl Workspaces {
         }
     }
 
-    pub fn change_focus<F>(&mut self, wid: u32, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(usize) -> usize {
-        if let Some(client) = self.find(wid).and_then(|index| self.workspaces[self.current].get_mut(f(index))) {
+    pub fn change_focus<F>(&mut self, wid: u32, f: F) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: Fn(usize) -> usize,
+    {
+        if let Some(client) = self
+            .find(wid)
+            .and_then(|index| self.workspaces[self.current].get_mut(f(index)))
+        {
             client.window.set_input_focus(RevertTo::Parent)?;
         }
 
         Ok(())
     }
 
-    pub fn map_clients<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Client) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn map_clients<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: Fn(&mut Client) -> Result<(), Box<dyn std::error::Error>>,
+    {
         for workspace in self.workspaces.iter_mut() {
             for client in workspace {
                 f(client)?;
@@ -113,18 +130,31 @@ impl Workspaces {
 
     pub fn tile(&mut self, mut area: Area, gaps: u16) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(workspace) = self.workspaces.get_mut(self.current) {
-            let ignored = workspace.iter().map(|client| client.state != State::Tiled).collect::<Vec<bool>>();
+            let ignored = workspace
+                .iter()
+                .map(|client| client.state != State::Tiled)
+                .collect::<Vec<bool>>();
 
             for (index, client) in workspace.iter_mut().enumerate() {
                 match client.state {
                     State::Tiled => {
-                        let tiled_clients_left = ignored[index + 1..].iter().filter(|ignore| !**ignore).count();
+                        let tiled_clients_left = ignored[index + 1..]
+                            .iter()
+                            .filter(|ignore| !**ignore)
+                            .count();
 
-                        let win = (tiled_clients_left > 0).then(|| area.split()).unwrap_or(area);
+                        let win = (tiled_clients_left > 0)
+                            .then(|| area.split())
+                            .unwrap_or(area);
 
-                        client.window.mov_resize(win.x + gaps, win.y + gaps, win.width - (gaps * 2), win.height - (gaps * 2))?;
-                    },
-                    _ => {},
+                        client.window.mov_resize(
+                            win.x + gaps,
+                            win.y + gaps,
+                            win.width - (gaps * 2),
+                            win.height - (gaps * 2),
+                        )?;
+                    }
+                    _ => {}
                 }
 
                 client.window.map(WindowKind::Window)?;
@@ -137,8 +167,8 @@ impl Workspaces {
                     match client.state {
                         State::Tiled | State::Float => {
                             client.window.unmap(WindowKind::Window)?;
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -183,11 +213,21 @@ impl Area {
         let area = self.clone();
 
         if self.width > self.height {
-            *self = Area::new(area.x + (area.width / 2), area.y, area.width / 2, area.height);
+            *self = Area::new(
+                area.x + (area.width / 2),
+                area.y,
+                area.width / 2,
+                area.height,
+            );
 
             Area::new(area.x, area.y, area.width / 2, area.height)
         } else {
-            *self = Area::new(area.x, area.y + (area.height / 2), area.width, area.height / 2);
+            *self = Area::new(
+                area.x,
+                area.y + (area.height / 2),
+                area.width,
+                area.height / 2,
+            );
 
             Area::new(area.x, area.y, area.width, area.height / 2)
         }
@@ -217,21 +257,19 @@ impl Monitors {
     }
 
     pub fn is_tiled(&mut self, wid: u32) -> bool {
-        self.monitors.iter()
+        self.monitors
+            .iter()
             .map(|monitor| monitor.workspace.is_float(wid))
             .any(|float| !float)
     }
 
-    pub fn focused<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn focused<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
+    {
         let pointer = self.root.query_pointer()?;
 
-        // TODO: this function doesnt find the focused monitor correctly
-
-        println!("pointer: {:?}", pointer);
-
         for monitor in &mut self.monitors {
-            println!("area: {:?}", monitor.area);
-
             if monitor.area.contains(pointer.root_x, pointer.root_y) {
                 f(monitor)?;
             }
@@ -240,7 +278,10 @@ impl Monitors {
         Ok(())
     }
 
-    pub fn all<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn all<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
+    {
         for monitor in &mut self.monitors {
             f(monitor)?;
         }
@@ -258,7 +299,13 @@ pub struct Grab {
 }
 
 impl Grab {
-    pub fn new(button: Button, window: Window, geometry: GetGeometryResponse, x: u16, y: u16) -> Grab {
+    pub fn new(
+        button: Button,
+        window: Window,
+        geometry: GetGeometryResponse,
+        x: u16,
+        y: u16,
+    ) -> Grab {
         Grab {
             button,
             window,
@@ -320,7 +367,11 @@ impl WindowManager {
             self.root.grab_button(
                 button,
                 vec![KeyMask::Mod4],
-                vec![EventMask::ButtonPress, EventMask::ButtonRelease, EventMask::ButtonMotion],
+                vec![
+                    EventMask::ButtonPress,
+                    EventMask::ButtonRelease,
+                    EventMask::ButtonMotion,
+                ],
                 Cursor::Nop,
                 PointerMode::Asynchronous,
                 KeyboardMode::Asynchronous,
@@ -366,24 +417,34 @@ impl WindowManager {
             values: ValuesBuilder::new(vec![]),
         })?;
 
-        window.ewmh_set_supporting_wm_check(window.id())?;
+        let ewmh = self.display.use_ewmh(&window);
 
-        window.ewmh_set_wm_name("yaxi")?;
+        ewmh.set_supporting_wm_check(window.id())?;
 
-        self.root.ewmh_set_supporting_wm_check(window.id())?;
+        ewmh.set_wm_name("yaxi")?;
+
+        self.display
+            .use_ewmh(&self.root)
+            .set_supporting_wm_check(window.id())?;
 
         Ok(())
     }
 
     fn tile(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.monitors.all(|monitor| {
-            monitor.workspace.tile(monitor.area.pad(self.config.padding), self.config.windows.gaps)
+            monitor.workspace.tile(
+                monitor.area.pad(self.config.padding),
+                self.config.windows.gaps,
+            )
         })?;
 
         Ok(())
     }
 
-    fn focused_client<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(&mut Client) -> Result<(), Box<dyn std::error::Error>> {
+    fn focused_client<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: Fn(&mut Client) -> Result<(), Box<dyn std::error::Error>>,
+    {
         let focus = self.display.get_input_focus()?;
 
         self.monitors.focused(|monitor| {
@@ -395,21 +456,24 @@ impl WindowManager {
         })
     }
 
-    /*
     // TODO: finish this, no question, DONT BE LAZY!
+
     fn move_window_monitor(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let focus = self.display.get_input_focus()?;
 
         Ok(())
     }
-    */
 
-    fn mov_resize_focused<F>(&mut self, transform: F) -> Result<(), Box<dyn std::error::Error>> where F: Fn(u16, u16, u16, u16) -> (u16, u16, u16, u16) {
+    fn mov_resize_focused<F>(&mut self, transform: F) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: Fn(u16, u16, u16, u16) -> (u16, u16, u16, u16),
+    {
         self.focused_client(|client| {
             if client.state == State::Float {
                 let geometry = client.window.get_geometry()?;
 
-                let (x, y, width, height) = transform(geometry.x, geometry.y, geometry.width, geometry.height);
+                let (x, y, width, height) =
+                    transform(geometry.x, geometry.y, geometry.width, geometry.height);
 
                 client.window.mov_resize(x, y, width, height)?;
             }
@@ -431,14 +495,19 @@ impl WindowManager {
     }
 
     fn set_border(&mut self, window: &Window) -> Result<(), Box<dyn std::error::Error>> {
-        if !window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
+        let ewmh = self.display.use_ewmh(window);
+
+        if !ewmh.get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
             let borders = self.config.windows.borders;
 
             self.monitors.focused(|monitor| {
                 monitor.workspace.map_clients(|client| {
                     client.window.set_border_width(borders.width)?;
 
-                    client.window.set_border_pixel(borders.normal).map_err(|err| err.into())
+                    client
+                        .window
+                        .set_border_pixel(borders.normal)
+                        .map_err(|err| err.into())
                 })
             })?;
 
@@ -450,51 +519,75 @@ impl WindowManager {
 
     fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for sequence in self.server.incoming()? {
-            println!("sequence: {:?}", sequence);
-
             match sequence.request {
                 Request::Workspace => {
                     self.monitors.focused(|monitor| {
                         if sequence.value.max(1) - 1 < monitor.workspace.len() as u32 {
                             monitor.workspace.current = sequence.value.max(1) as usize - 1;
 
-                            self.root.ewmh_set_current_desktop(monitor.workspace.current as u32)?;
+                            self.display
+                                .use_ewmh(&self.root)
+                                .set_current_desktop(monitor.workspace.current as u32)?;
                         }
 
-                        monitor.workspace.tile(monitor.area.pad(self.config.padding), self.config.windows.gaps)
+                        monitor.workspace.tile(
+                            monitor.area.pad(self.config.padding),
+                            self.config.windows.gaps,
+                        )
                     })?;
-                },
+                }
                 Request::Kill => {
                     self.focused_client(|client| client.window.kill().map_err(|err| err.into()))?;
-                },
+                }
                 Request::Close => {
                     let atoms = self.atoms.clone();
 
                     self.focused_client(|client| {
-                        client.window.send_event(Event::ClientMessage {
-                            format: 32,
-                            window: client.window.id(),
-                            type_: atoms.wm_protocols,
-                            data: ClientMessageData::Long([atoms.wm_delete.id(), 0, 0, 0, 0]),
-                        }, vec![], false).map_err(|err| err.into())
+                        client
+                            .window
+                            .send_event(
+                                Event::ClientMessage {
+                                    format: 32,
+                                    window: client.window.id(),
+                                    type_: atoms.wm_protocols,
+                                    data: ClientMessageData::Long([
+                                        atoms.wm_delete.id(),
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                    ]),
+                                },
+                                vec![],
+                                false,
+                            )
+                            .map_err(|err| err.into())
                     })?;
-                },
+                }
                 Request::FocusUp | Request::FocusDown | Request::FocusMaster => {
                     let focus = self.display.get_input_focus()?;
 
-                    self.monitors.focused(|monitor| {
-                        match sequence.request {
-                            Request::FocusUp => monitor.workspace.change_focus(focus.window, |index| index.max(1) - 1),
-                            Request::FocusDown => monitor.workspace.change_focus(focus.window, |index| index + 1),
-                            Request::FocusMaster => monitor.workspace.change_focus(focus.window, |_| 0),
-                            _ => Ok(()),
-                        }
+                    self.monitors.focused(|monitor| match sequence.request {
+                        Request::FocusUp => monitor
+                            .workspace
+                            .change_focus(focus.window, |index| index.max(1) - 1),
+                        Request::FocusDown => monitor
+                            .workspace
+                            .change_focus(focus.window, |index| index + 1),
+                        Request::FocusMaster => monitor.workspace.change_focus(focus.window, |_| 0),
+                        _ => Ok(()),
                     })?;
-                },
-                Request::PaddingTop | Request::PaddingBottom | Request::PaddingLeft | Request::PaddingRight | Request::WindowGaps => {
+                }
+                Request::PaddingTop
+                | Request::PaddingBottom
+                | Request::PaddingLeft
+                | Request::PaddingRight
+                | Request::WindowGaps => {
                     match sequence.request {
                         Request::PaddingTop => self.config.padding.top = sequence.value as u16,
-                        Request::PaddingBottom => self.config.padding.bottom = sequence.value as u16,
+                        Request::PaddingBottom => {
+                            self.config.padding.bottom = sequence.value as u16
+                        }
                         Request::PaddingLeft => self.config.padding.left = sequence.value as u16,
                         Request::PaddingRight => self.config.padding.right = sequence.value as u16,
                         Request::WindowGaps => self.config.windows.gaps = sequence.value as u16,
@@ -502,17 +595,23 @@ impl WindowManager {
                     }
 
                     self.tile()?;
-                },
+                }
                 Request::FocusedBorder | Request::NormalBorder | Request::BorderWidth => {
                     match sequence.request {
-                        Request::FocusedBorder => self.config.windows.borders.focused = sequence.value,
-                        Request::NormalBorder => self.config.windows.borders.normal = sequence.value,
-                        Request::BorderWidth => self.config.windows.borders.width = sequence.value as u16,
+                        Request::FocusedBorder => {
+                            self.config.windows.borders.focused = sequence.value
+                        }
+                        Request::NormalBorder => {
+                            self.config.windows.borders.normal = sequence.value
+                        }
+                        Request::BorderWidth => {
+                            self.config.windows.borders.width = sequence.value as u16
+                        }
                         _ => unreachable!(),
                     }
 
                     self.update_borders()?;
-                },
+                }
                 Request::FloatToggle => {
                     self.focused_client(|client| {
                         if client.state == State::Float {
@@ -525,15 +624,31 @@ impl WindowManager {
                     })?;
 
                     self.tile()?;
-                },
-                Request::FloatRight => self.mov_resize_focused(|x, y, width, height| (x + sequence.value as u16, y, width, height))?,
-                Request::FloatLeft => self.mov_resize_focused(|x, y, width, height| (x - (sequence.value as u16).min(x), y, width, height))?,
-                Request::FloatUp => self.mov_resize_focused(|x, y, width, height| (x, y - (sequence.value as u16).min(y), width, height))?,
-                Request::FloatDown => self.mov_resize_focused(|x, y, width, height| (x, y + sequence.value as u16, width, height))?,
-                Request::ResizeRight => self.mov_resize_focused(|x, y, width, height| (x, y, width + sequence.value as u16, height))?,
-                Request::ResizeLeft => self.mov_resize_focused(|x, y, width, height| (x, y, width - (sequence.value as u16).min(width), height))?,
-                Request::ResizeUp => self.mov_resize_focused(|x, y, width, height| (x, y, width, height - (sequence.value as u16).min(height)))?,
-                Request::ResizeDown => self.mov_resize_focused(|x, y, width, height| (x, y, width, height + sequence.value as u16))?,
+                }
+                Request::FloatRight => self.mov_resize_focused(|x, y, width, height| {
+                    (x + sequence.value as u16, y, width, height)
+                })?,
+                Request::FloatLeft => self.mov_resize_focused(|x, y, width, height| {
+                    (x - (sequence.value as u16).min(x), y, width, height)
+                })?,
+                Request::FloatUp => self.mov_resize_focused(|x, y, width, height| {
+                    (x, y - (sequence.value as u16).min(y), width, height)
+                })?,
+                Request::FloatDown => self.mov_resize_focused(|x, y, width, height| {
+                    (x, y + sequence.value as u16, width, height)
+                })?,
+                Request::ResizeRight => self.mov_resize_focused(|x, y, width, height| {
+                    (x, y, width + sequence.value as u16, height)
+                })?,
+                Request::ResizeLeft => self.mov_resize_focused(|x, y, width, height| {
+                    (x, y, width - (sequence.value as u16).min(width), height)
+                })?,
+                Request::ResizeUp => self.mov_resize_focused(|x, y, width, height| {
+                    (x, y, width, height - (sequence.value as u16).min(height))
+                })?,
+                Request::ResizeDown => self.mov_resize_focused(|x, y, width, height| {
+                    (x, y, width, height + sequence.value as u16)
+                })?,
                 Request::EnableMouse => self.config.windows.mouse_movement = true,
                 Request::DisableMouse => self.config.windows.mouse_movement = false,
                 Request::WorkspacePerMonitor => {
@@ -543,13 +658,13 @@ impl WindowManager {
                         Ok(())
                     })?;
 
-                    self.root.ewmh_set_number_of_desktops(sequence.value)?;
-                },
-                Request::MonitorNext => {
-                },
-                Request::MonitorPrevious => {
-                },
-                Request::Unknown => {},
+                    self.display
+                        .use_ewmh(&self.root)
+                        .set_number_of_desktops(sequence.value)?;
+                }
+                Request::MonitorNext => {}
+                Request::MonitorPrevious => {}
+                Request::Unknown => {}
             }
         }
 
@@ -562,9 +677,14 @@ impl WindowManager {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
                 let window = self.display.window_from_id(window)?;
-                let type_ = window.ewmh_get_wm_window_type()?;
+                let type_ = self.display.use_ewmh(&window).get_wm_window_type()?;
 
-                window.select_input(&[EventMask::SubstructureNotify, EventMask::SubstructureRedirect, EventMask::EnterWindow, EventMask::FocusChange])?;
+                window.select_input(&[
+                    EventMask::SubstructureNotify,
+                    EventMask::SubstructureRedirect,
+                    EventMask::EnterWindow,
+                    EventMask::FocusChange,
+                ])?;
 
                 window.map(WindowKind::Window)?;
 
@@ -575,7 +695,9 @@ impl WindowManager {
 
                     self.monitors.focused(move |monitor| {
                         if monitor.workspace.find(window.id()).is_none() {
-                            monitor.workspace.insert(Client::new(window.clone(), State::from(type_.as_slice())));
+                            monitor
+                                .workspace
+                                .insert(Client::new(window.clone(), State::from(type_.as_slice())));
                         }
 
                         Ok(())
@@ -583,48 +705,51 @@ impl WindowManager {
 
                     self.tile()?;
                 }
-            },
+            }
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
 
                 self.monitors.all(|monitor| {
                     if let Some(index) = monitor.workspace.find(window) {
-                        println!("removing: {}", index);
-
                         monitor.workspace.remove(index);
-
-                        // TODO: maybe we dont need to automatically change focus
-                        // monitor.workspace.change_focus(window, |index| index - 1)?;
                     }
 
                     Ok(())
                 })?;
 
                 self.tile()?;
-            },
+            }
             Event::EnterNotify { window, .. } => {
                 log::write(format!("enter notify: {}\n", window), Severity::Info)?;
 
                 if window != self.root.id() && window > 1 {
                     let window = self.display.window_from_id(window)?;
+                    let ewmh = self.display.use_ewmh(&window);
 
-                    if !window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
+                    if !ewmh.get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
                         window.set_input_focus(RevertTo::Parent)?;
                     }
                 }
-            },
+            }
             Event::FocusIn { window, .. } => {
                 log::write(format!("focus in: {}\n", window), Severity::Info)?;
 
                 if window != self.root.id() && window > 1 {
                     let window = self.display.window_from_id(window)?;
+                    let ewmh = self.display.use_ewmh(&window);
 
-                    if !window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
+                    if !ewmh.get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
                         self.set_border(&window)?;
                     }
                 }
-            },
-            Event::ButtonEvent { kind, coordinates, subwindow, button, .. } => match kind {
+            }
+            Event::ButtonEvent {
+                kind,
+                coordinates,
+                subwindow,
+                button,
+                ..
+            } => match kind {
                 EventKind::Press => {
                     if !self.monitors.is_tiled(subwindow) && self.config.windows.mouse_movement {
                         let window = self.display.window_from_id(subwindow)?;
@@ -642,19 +767,28 @@ impl WindowManager {
 
                         let geometry = window.get_geometry()?;
 
-                        self.grab.replace(Grab::new(button, window, geometry, coordinates.root_x, coordinates.root_y));
+                        self.grab.replace(Grab::new(
+                            button,
+                            window,
+                            geometry,
+                            coordinates.root_x,
+                            coordinates.root_y,
+                        ));
                     }
-                },
+                }
                 EventKind::Release => {
                     if self.grab.is_some() {
                         self.display.ungrab_pointer()?;
 
                         self.grab = None;
                     }
-                },
+                }
             },
             Event::MotionNotify { coordinates, .. } => {
-                log::write(format!("motion notify: {:?}\n", coordinates), Severity::Info)?;
+                log::write(
+                    format!("motion notify: {:?}\n", coordinates),
+                    Severity::Info,
+                )?;
 
                 if let Some(grab) = &mut self.grab {
                     let x_diff = coordinates.root_x as i16 - grab.x as i16;
@@ -662,25 +796,35 @@ impl WindowManager {
 
                     match grab.button {
                         Button::Button1 => {
-                            grab.window.mov((grab.geometry.x as i16 + x_diff) as u16, (grab.geometry.y as i16 + y_diff) as u16)?;
-                        },
+                            grab.window.mov(
+                                (grab.geometry.x as i16 + x_diff) as u16,
+                                (grab.geometry.y as i16 + y_diff) as u16,
+                            )?;
+                        }
                         Button::Button3 => {
-                            grab.window.resize((grab.geometry.width as i16 + x_diff) as u16, (grab.geometry.height as i16 + y_diff) as u16)?;
-                        },
-                        _ => {},
+                            grab.window.resize(
+                                (grab.geometry.width as i16 + x_diff) as u16,
+                                (grab.geometry.height as i16 + y_diff) as u16,
+                            )?;
+                        }
+                        _ => {}
                     }
                 }
-            },
+            }
             Event::ConfigureRequest { window, values } => {
-                log::write(format!("configure request: {}, values: {:?}\n", window, values), Severity::Info)?;
+                log::write(
+                    format!("configure request: {}, values: {:?}\n", window, values),
+                    Severity::Info,
+                )?;
 
                 let window = self.display.window_from_id(window)?;
+                let ewmh = self.display.use_ewmh(&window);
 
-                if window.ewmh_get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
+                if ewmh.get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
                     window.configure(ValuesBuilder::new(values))?;
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
 
         Ok(())
@@ -695,6 +839,9 @@ impl WindowManager {
         //
         // ~/.config/polybar/launch.sh &
 
+        // TODO: this loop results in high cpu usage, maybe we should have some sort of shared
+        // event queue?
+
         while !self.should_close {
             if self.display.poll_event()? {
                 self.handle_event()?;
@@ -706,5 +853,3 @@ impl WindowManager {
         Ok(())
     }
 }
-
-
