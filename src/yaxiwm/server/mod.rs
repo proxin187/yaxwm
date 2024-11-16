@@ -1,64 +1,22 @@
 use crate::log::{self, Severity};
+use crate::event::{EventQueue, EventType};
 
 use std::env;
 use std::fs;
 use std::os::unix::net::UnixListener;
-use std::sync::{Arc, Mutex};
 use std::thread;
 
 use proto::{Sequence, Stream};
 
-macro_rules! lock {
-    ($mutex:expr) => {
-        $mutex
-            .lock()
-            .map_err(|_| Into::<Box<dyn std::error::Error>>::into("failed to lock"))
-    };
-}
-
-pub struct Server {
-    incoming: Arc<Mutex<Vec<Sequence>>>,
-}
-
-impl Server {
-    pub fn new() -> Server {
-        Server {
-            incoming: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub fn incoming(&self) -> Result<Vec<Sequence>, Box<dyn std::error::Error>> {
-        lock!(self.incoming).map(|mut lock| lock.drain(..).collect::<Vec<Sequence>>())
-    }
-
-    pub fn listen(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let incoming = self.incoming.clone();
-
-        thread::spawn(move || {
-            match Listener::new(incoming).and_then(|mut listener| listener.listen()) {
-                Ok(()) => {}
-                Err(err) => {
-                    log::write(format!("listener failed: {}\n", err), Severity::Error)
-                        .expect("failed to log");
-                }
-            }
-        });
-
-        Ok(())
-    }
-}
 
 pub struct Listener {
     listener: UnixListener,
-    incoming: Arc<Mutex<Vec<Sequence>>>,
+    events: EventQueue,
 }
 
 impl Listener {
-    pub fn new(
-        incoming: Arc<Mutex<Vec<Sequence>>>,
-    ) -> Result<Listener, Box<dyn std::error::Error>> {
-        let home = env::var("HOME")?;
-        let path = format!("{home}/.config/yaxiwm/ipc");
+    pub fn new(events: EventQueue) -> Result<Listener, Box<dyn std::error::Error>> {
+        let path = format!("{}/.config/yaxiwm/ipc", env::var("HOME")?);
 
         if fs::exists(&path)? {
             fs::remove_file(&path)?;
@@ -66,19 +24,19 @@ impl Listener {
 
         Ok(Listener {
             listener: UnixListener::bind(path)?,
-            incoming,
+            events,
         })
     }
 
     fn handle(&self, mut stream: Stream) -> Result<(), Box<dyn std::error::Error>> {
-        let actions = stream
+        let events = stream
             .read()?
             .chunks(5)
             .filter(|chunk| chunk.len() == 5)
-            .map(|chunk| Sequence::decode(chunk))
-            .collect::<Vec<Sequence>>();
+            .map(|chunk| EventType::Config(Sequence::decode(chunk)))
+            .collect::<Vec<EventType>>();
 
-        lock!(self.incoming)?.extend(actions);
+        self.events.extend(events)?;
 
         Ok(())
     }
@@ -93,3 +51,19 @@ impl Listener {
         Ok(())
     }
 }
+
+pub fn listen(events: EventQueue) -> Result<(), Box<dyn std::error::Error>> {
+    thread::spawn(move || {
+        match Listener::new(events).and_then(|mut listener| listener.listen()) {
+            Ok(()) => {}
+            Err(err) => {
+                log::write(format!("listener failed: {}\n", err), Severity::Error)
+                    .expect("failed to log");
+            }
+        }
+    });
+
+    Ok(())
+}
+
+

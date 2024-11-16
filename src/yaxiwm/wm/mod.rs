@@ -1,7 +1,8 @@
 use crate::config::{Config, Padding};
 use crate::log::{self, Severity};
-use crate::server::Server;
+use crate::event::{EventQueue, EventType};
 use crate::startup;
+use crate::server;
 
 use yaxi::display::request::GetGeometryResponse;
 use yaxi::display::{self, Atom, Display};
@@ -12,7 +13,10 @@ use yaxi::proto::{
 };
 use yaxi::window::{ValuesBuilder, Window, WindowArguments, WindowKind};
 
-use proto::Request;
+use proto::{Request, Sequence};
+
+use std::thread;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -326,8 +330,8 @@ pub struct WindowManager {
     display: Display,
     root: Window,
     monitors: Monitors,
-    server: Server,
     config: Config,
+    events: EventQueue,
     atoms: Atoms,
     grab: Option<Grab>,
     should_close: bool,
@@ -347,8 +351,8 @@ impl WindowManager {
             display,
             root: root.clone(),
             monitors: Monitors::new(root),
-            server: Server::new(),
             config: Config::default(),
+            events: EventQueue::new(),
             atoms,
             grab: None,
             should_close: false,
@@ -380,7 +384,7 @@ impl WindowManager {
             )?;
         }
 
-        self.server.listen()?;
+        server::listen(self.events.clone())?;
 
         self.set_supporting_ewmh()?;
 
@@ -517,8 +521,7 @@ impl WindowManager {
         Ok(())
     }
 
-    fn handle_incoming(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        for sequence in self.server.incoming()? {
+    fn handle_sequence(&mut self, sequence: Sequence) -> Result<(), Box<dyn std::error::Error>> {
             match sequence.request {
                 Request::Workspace => {
                     self.monitors.focused(|monitor| {
@@ -666,13 +669,12 @@ impl WindowManager {
                 Request::MonitorPrevious => {}
                 Request::Unknown => {}
             }
-        }
 
         Ok(())
     }
 
-    fn handle_event(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match self.display.next_event()? {
+    fn handle_event(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
+        match event {
             Event::MapRequest { window, .. } => {
                 log::write(format!("map request: {}\n", window), Severity::Info)?;
 
@@ -835,21 +837,34 @@ impl WindowManager {
 
         log::write("yaxum is running\n", Severity::Info)?;
 
+        listen(self.display.clone(), self.events.clone());
+
         // TODO: the bspwm config runs this to start the bar
         //
         // ~/.config/polybar/launch.sh &
 
-        // TODO: this loop results in high cpu usage, maybe we should have some sort of shared
-        // event queue?
-
         while !self.should_close {
-            if self.display.poll_event()? {
-                self.handle_event()?;
+            match self.events.wait()? {
+                EventType::XEvent(event) => {
+                    self.handle_event(event)?;
+                },
+                EventType::Config(sequence) => {
+                    self.handle_sequence(sequence)?;
+                },
             }
-
-            self.handle_incoming()?;
         }
 
         Ok(())
     }
 }
+
+fn listen(display: Display, events: EventQueue) {
+    thread::spawn(move || {
+        loop {
+            let event = display.next_event().expect("failed to listen");
+
+            events.push(EventType::XEvent(event)).expect("failed to push");
+        }
+    });
+}
+
