@@ -65,8 +65,8 @@ pub enum Request {
     EnableMouse,
     DisableMouse,
     WorkspacePerMonitor,
-    MonitorNext,
-    MonitorPrevious,
+    MonitorCirculate,
+    Quit,
     Unknown,
 }
 

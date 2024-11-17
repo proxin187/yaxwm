@@ -35,8 +35,8 @@ const ARGUMENTS: [(&str, Rule<Request>); 28] = [
         "--workspaces-per-monitor",
         Rule::Integer(Request::WorkspacePerMonitor),
     ),
-    ("--monitor-next", Rule::Flag(Request::MonitorNext)),
-    ("--monitor-previous", Rule::Flag(Request::MonitorPrevious)),
+    ("--monitor-circulate", Rule::Flag(Request::MonitorCirculate)),
+    ("--quit", Rule::Flag(Request::Quit))
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -88,8 +88,8 @@ impl Workspaces {
         self.workspaces[self.current].push(client);
     }
 
-    pub fn remove(&mut self, index: usize) {
-        self.workspaces[self.current].remove(index);
+    pub fn remove(&mut self, index: usize) -> Client {
+        self.workspaces[self.current].remove(index)
     }
 
     pub fn find(&self, wid: u32) -> Option<usize> {
@@ -267,9 +267,23 @@ impl Monitors {
             .any(|float| !float)
     }
 
-    pub fn focused<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>>
+    pub fn extract_client(&mut self, wid: u32) -> Result<Option<(usize, Client)>, Box<dyn std::error::Error>> {
+        let mut client: Option<(usize, Client)> = None;
+
+        self.all(|count, monitor|  {
+            if let Some(index) = monitor.workspace.find(wid) {
+                client.replace((count, monitor.workspace.remove(index)));
+            }
+
+            Ok(())
+        })?;
+
+        Ok(client)
+    }
+
+    pub fn focused<F>(&mut self, mut f: F) -> Result<(), Box<dyn std::error::Error>>
     where
-        F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
+        F: FnMut(&mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
     {
         let pointer = self.root.query_pointer()?;
 
@@ -282,12 +296,12 @@ impl Monitors {
         Ok(())
     }
 
-    pub fn all<F>(&mut self, f: F) -> Result<(), Box<dyn std::error::Error>>
+    pub fn all<F>(&mut self, mut f: F) -> Result<(), Box<dyn std::error::Error>>
     where
-        F: Fn(&mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
+        F: FnMut(usize, &mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
     {
-        for monitor in &mut self.monitors {
-            f(monitor)?;
+        for (index, monitor) in self.monitors.iter_mut().enumerate() {
+            f(index, monitor)?;
         }
 
         Ok(())
@@ -435,7 +449,7 @@ impl WindowManager {
     }
 
     fn tile(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.monitors.all(|monitor| {
+        self.monitors.all(|_, monitor| {
             monitor.workspace.tile(
                 monitor.area.pad(self.config.padding),
                 self.config.windows.gaps,
@@ -460,12 +474,20 @@ impl WindowManager {
         })
     }
 
-    // TODO: finish this, no question, DONT BE LAZY!
-
-    fn move_window_monitor(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn monitor_circulate(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let focus = self.display.get_input_focus()?;
 
-        Ok(())
+        if let Some((count, client)) = self.monitors.extract_client(focus.window)? {
+            if self.monitors.monitors.len() > 0 {
+                let index = (count + 1 >= self.monitors.monitors.len())
+                    .then(|| 0)
+                    .unwrap_or(count + 1);
+
+                self.monitors.monitors[index].workspace.insert(client);
+            }
+        }
+
+        self.tile()
     }
 
     fn mov_resize_focused<F>(&mut self, transform: F) -> Result<(), Box<dyn std::error::Error>>
@@ -504,7 +526,7 @@ impl WindowManager {
         if !ewmh.get_wm_window_type()?.contains(&EwmhWindowType::Dock) {
             let borders = self.config.windows.borders;
 
-            self.monitors.focused(|monitor| {
+            self.monitors.all(|_, monitor| {
                 monitor.workspace.map_clients(|client| {
                     client.window.set_border_width(borders.width)?;
 
@@ -655,7 +677,7 @@ impl WindowManager {
                 Request::EnableMouse => self.config.windows.mouse_movement = true,
                 Request::DisableMouse => self.config.windows.mouse_movement = false,
                 Request::WorkspacePerMonitor => {
-                    self.monitors.all(|monitor| {
+                    self.monitors.all(|_, monitor| {
                         monitor.workspace.resize(sequence.value as usize);
 
                         Ok(())
@@ -665,8 +687,8 @@ impl WindowManager {
                         .use_ewmh(&self.root)
                         .set_number_of_desktops(sequence.value)?;
                 }
-                Request::MonitorNext => {}
-                Request::MonitorPrevious => {}
+                Request::MonitorCirculate => self.monitor_circulate()?,
+                Request::Quit => self.should_close = true,
                 Request::Unknown => {}
             }
 
@@ -711,7 +733,7 @@ impl WindowManager {
             Event::UnmapNotify { window, .. } => {
                 log::write(format!("unmap notify: {}\n", window), Severity::Info)?;
 
-                self.monitors.all(|monitor| {
+                self.monitors.all(|_, monitor| {
                     if let Some(index) = monitor.workspace.find(window) {
                         monitor.workspace.remove(index);
                     }
