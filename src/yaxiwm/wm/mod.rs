@@ -878,7 +878,7 @@ impl WindowManager {
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.setup()?;
 
-        log::write("yaxum is running\n", Severity::Info)?;
+        log::write("yaxiwm is running\n", Severity::Info)?;
 
         listen(self.display.clone(), self.events.clone());
 

@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Output::file("/home/proxin/.config/yaxiwm/log.txt")?,
     ])?;
 
-    log::write("starting yaxum\n", Severity::Info)?;
+    log::write("starting yaxiwm\n", Severity::Info)?;
 
     let mut wm = WindowManager::new()?;
 
