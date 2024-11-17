@@ -285,13 +285,13 @@ impl Monitors {
 
     pub fn focused<F>(&mut self, mut f: F) -> Result<(), Box<dyn std::error::Error>>
     where
-        F: FnMut(&mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
+        F: FnMut(usize, &mut Monitor) -> Result<(), Box<dyn std::error::Error>>,
     {
         let pointer = self.root.query_pointer()?;
 
-        for monitor in &mut self.monitors {
+        for (index, monitor) in self.monitors.iter_mut().enumerate() {
             if monitor.area.contains(pointer.root_x, pointer.root_y) {
-                f(monitor)?;
+                f(index, monitor)?;
             }
         }
 
@@ -486,7 +486,7 @@ impl WindowManager {
     {
         let focus = self.display.get_input_focus()?;
 
-        self.monitors.focused(|monitor| {
+        self.monitors.focused(|_, monitor| {
             if let Some(index) = monitor.workspace.find(focus.window) {
                 f(&mut monitor.workspace.workspaces[monitor.workspace.current][index])?;
             }
@@ -567,13 +567,13 @@ impl WindowManager {
     fn handle_sequence(&mut self, sequence: Sequence) -> Result<(), Box<dyn std::error::Error>> {
             match sequence.request {
                 Request::Workspace => {
-                    self.monitors.focused(|monitor| {
+                    self.monitors.focused(|count, monitor| {
                         if sequence.value.max(1) - 1 < monitor.workspace.len() as u32 {
                             monitor.workspace.current = sequence.value.max(1) as usize - 1;
 
                             self.display
                                 .use_ewmh(&self.root)
-                                .set_current_desktop(monitor.workspace.current as u32)?;
+                                .set_current_desktop((monitor.workspace.len() * count) as u32 + monitor.workspace.current as u32)?;
                         }
 
                         monitor.workspace.tile(
@@ -613,7 +613,7 @@ impl WindowManager {
                 Request::FocusUp | Request::FocusDown | Request::FocusMaster => {
                     let focus = self.display.get_input_focus()?;
 
-                    self.monitors.focused(|monitor| match sequence.request {
+                    self.monitors.focused(|_, monitor| match sequence.request {
                         Request::FocusUp => monitor
                             .workspace
                             .change_focus(focus.window, |index| index.max(1) - 1),
@@ -706,7 +706,7 @@ impl WindowManager {
 
                     self.display
                         .use_ewmh(&self.root)
-                        .set_number_of_desktops(sequence.value)?;
+                        .set_number_of_desktops(sequence.value * self.monitors.monitors.len() as u32)?;
                 }
                 Request::MonitorCirculate => self.monitor_circulate()?,
                 Request::Quit => self.should_close = true,
@@ -738,7 +738,7 @@ impl WindowManager {
 
                     self.set_border(&window)?;
 
-                    self.monitors.focused(move |monitor| {
+                    self.monitors.focused(|_, monitor| {
                         if monitor.workspace.find(window.id()).is_none() {
                             monitor
                                 .workspace
