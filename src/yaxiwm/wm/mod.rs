@@ -27,7 +27,9 @@ pub enum State {
 
 impl From<&[EwmhWindowType]> for State {
     fn from(type_: &[EwmhWindowType]) -> State {
-        if type_.contains(&EwmhWindowType::Dock) {
+        if type_.contains(&EwmhWindowType::Dock)
+            || type_.contains(&EwmhWindowType::Toolbar)
+            || type_.contains(&EwmhWindowType::Menu) {
             State::Dock
         } else if type_.contains(&EwmhWindowType::Splash)
             || type_.contains(&EwmhWindowType::Utility)
@@ -441,9 +443,28 @@ impl WindowManager {
 
         ewmh.set_wm_name("yaxi")?;
 
-        self.display
-            .use_ewmh(&self.root)
-            .set_supporting_wm_check(window.id())?;
+        let root = self.display.use_ewmh(&self.root);
+
+        root.set_supporting_wm_check(window.id())?;
+
+        // TODO: support for _NET_WM_STATE and _NET_WM_STATE_FULLSCREEN
+
+        root.set_supported(&[
+            self.display.intern_atom("WM_PROTOCOLS", false)?,
+            self.display.intern_atom("WM_DELETE_WINDOW", false)?,
+            self.display.intern_atom("_NET_ACTIVE_WINDOW", false)?,
+            self.display.intern_atom("_NET_NUMBER_OF_DESKTOPS", false)?,
+            self.display.intern_atom("_NET_CURRENT_DESKTOP", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_DESKTOP", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_DOCK", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_TOOLBAR", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_MENU", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_UTILITY", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_SPLASH", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_DIALOG", false)?,
+            self.display.intern_atom("_NET_WM_WINDOW_TYPE_NORMAL", false)?,
+        ])?;
 
         Ok(())
     }
