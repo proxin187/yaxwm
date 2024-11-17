@@ -423,8 +423,14 @@ impl WindowManager {
             });
         }
 
-        let viewport = screens.iter()
-            .map(|screen| DesktopViewport::new(screen.x as u32, screen.y as u32))
+        self.update_viewport()?;
+
+        Ok(())
+    }
+
+    fn update_viewport(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let viewport = self.monitors.monitors.iter()
+            .flat_map(|monitor| vec![DesktopViewport::new(monitor.area.x as u32, monitor.area.y as u32); monitor.workspace.len()])
             .collect::<Vec<DesktopViewport>>();
 
         self.display
@@ -717,6 +723,8 @@ impl WindowManager {
                     self.display
                         .use_ewmh(&self.root)
                         .set_number_of_desktops(sequence.value * self.monitors.monitors.len() as u32)?;
+
+                    self.update_viewport()?;
                 }
                 Request::MonitorCirculate => self.monitor_circulate()?,
                 Request::Quit => self.should_close = true,
