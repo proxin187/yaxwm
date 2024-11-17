@@ -6,7 +6,7 @@ use crate::server;
 
 use yaxi::display::request::GetGeometryResponse;
 use yaxi::display::{self, Atom, Display};
-use yaxi::ewmh::EwmhWindowType;
+use yaxi::ewmh::{EwmhWindowType, DesktopViewport};
 use yaxi::proto::{
     Button, ClientMessageData, Cursor, Event, EventKind, EventMask, KeyMask, KeyboardMode,
     PointerMode, RevertTo, WindowClass,
@@ -414,12 +414,22 @@ impl WindowManager {
     fn load_monitors(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let xinerama = self.display.query_xinerama()?;
 
-        for screen in xinerama.query_screens()? {
+        let screens = xinerama.query_screens()?;
+
+        for screen in &screens {
             self.monitors.append(Monitor {
                 area: Area::new(screen.x, screen.y, screen.width, screen.height),
                 workspace: Workspaces::new(),
             });
         }
+
+        let viewport = screens.iter()
+            .map(|screen| DesktopViewport::new(screen.x as u32, screen.y as u32))
+            .collect::<Vec<DesktopViewport>>();
+
+        self.display
+            .use_ewmh(&self.root)
+            .set_desktop_viewport(&viewport)?;
 
         Ok(())
     }
